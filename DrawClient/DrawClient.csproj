@@ -91,7 +91,9 @@
     <Compile Include="Models\Room.cs" />
     <Compile Include="Models\ServerConfig .cs" />
     <Compile Include="Models\User.cs" />
-    <Compile Include="ViewModels\CanvasViewModel.cs" />
+    <Compile Include="ViewModels\Canvas\CanvasViewModel.cs" />
+    <Compile Include="ViewModels\Canvas\ChatViewModel.cs" />
+    <Compile Include="ViewModels\Canvas\ToolbarViewModel.cs" />
     <Compile Include="ViewModels\DashboardViewModel.cs" />
     <Compile Include="ViewModels\LoginViewModel.cs" />
     <Compile Include="ViewModels\MainViewModel.cs" />

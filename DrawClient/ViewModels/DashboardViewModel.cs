@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Windows.Input;
 
 namespace DrawClient.ViewModels
@@ -22,7 +23,7 @@ namespace DrawClient.ViewModels
 
         // Lệnh để chuyển sang màn hình Canvas
         public ICommand JoinRoomCommand { get; }
-        public Action GoToCanvas { get; set; }
+        public Action<string, string> GoToCanvas { get; set; }
 
         public LobbyViewModel()
         {
@@ -50,8 +51,18 @@ namespace DrawClient.ViewModels
 
         private void ExecuteJoinRoom(object obj)
         {
-            // Chuyển trang sang bảng vẽ
-            GoToCanvas?.Invoke();
+            string selectedRoomId = obj as string;
+
+            if (string.IsNullOrEmpty(selectedRoomId))
+                return;
+
+            var selectedRoom = Rooms.FirstOrDefault(r => r.Id == selectedRoomId);
+
+            string roomName = selectedRoom != null ? selectedRoom.Name : "Phòng vẽ";
+
+            ClientSocket.Instance.JoinRoom(selectedRoomId);
+
+            GoToCanvas?.Invoke(selectedRoomId, roomName);
         }
     }
 }

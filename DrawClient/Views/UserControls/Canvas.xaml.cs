@@ -58,7 +58,7 @@ namespace DrawClient.Views.UserControls
 
             // vẽ local
             DrawLineLocal(lastPoint, currentPoint, _viewModel.CurrentColor, _viewModel.CurrentThickness);
-            
+
             _viewModel.SendDrawData(lastPoint, currentPoint);
 
             lastPoint = currentPoint;

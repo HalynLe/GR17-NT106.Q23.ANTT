@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using DrawClient.Models;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
 namespace DrawClient.ViewModels
@@ -15,7 +16,8 @@ namespace DrawClient.ViewModels
         public MainViewModel()
         {
             // Khi app vừa chạy lên, mở màn hình Login đầu tiên
-            NavigateToLogin();
+            //NavigateToLogin();
+            NavigateToCanvas("room_test_123", "Canvas test");
         }
 
         // Các hàm điều hướng
@@ -33,9 +35,10 @@ namespace DrawClient.ViewModels
             CurrentView = lobbyVM;
         }
 
-        private void NavigateToCanvas()
+        private void NavigateToCanvas(string roomId, string roomName)
         {
-            var canvasVM = new CanvasViewModel();
+            var canvasVM = new CanvasViewModel(roomName, roomId);
+            canvasVM.GoBackToLobby = NavigateToLobby;
             CurrentView = canvasVM;
         }
 

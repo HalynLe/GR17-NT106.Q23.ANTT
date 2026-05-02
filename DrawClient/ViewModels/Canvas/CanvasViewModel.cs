@@ -11,6 +11,7 @@ using System;
 
 namespace DrawClient.ViewModels
 {
+
     public class UserParticipant
     {
         public string Initials { get; set; }
@@ -25,12 +26,25 @@ namespace DrawClient.ViewModels
     }
     public class CanvasViewModel : INotifyPropertyChanged
     {
+        private string _roomName;
+        public string RoomName
+        {
+            get => _roomName;
+            set { _roomName = value; OnPropertyChanged(); }
+        }
+
+        private string _roomId;
+        public ICommand LeaveRoomCommand { get; }
+        public Action GoBackToLobby { get; set; }
+
         // Danh sách dữ liệu
         public ObservableCollection<UserParticipant> Users { get; set; }
         public ObservableCollection<string> NetworkLogs { get; set; }
         public ObservableCollection<ChatMessage> ChatMessages { get; set; }
 
         // Các State quản lý Giao diện
+
+
         private bool _isSidebarOpen = true;
         public bool IsSidebarOpen
         {
@@ -67,8 +81,13 @@ namespace DrawClient.ViewModels
         }
 
         public event Action<Point, Point, string, double> OnLineReceived;
-        public CanvasViewModel()
+        public CanvasViewModel(string roomName, string roomId)
         {
+            RoomName = roomName;
+            _roomId = roomId;
+
+            LeaveRoomCommand = new RelayCommand(ExecuteLeaveRoom);
+
             // Mock Data
             Users = new ObservableCollection<UserParticipant>
             {
@@ -108,6 +127,13 @@ namespace DrawClient.ViewModels
             };
 
             ClientSocket.Instance.Send(msg);
+        }
+
+        private void ExecuteLeaveRoom(object obj)
+        {
+            var leaveMsg = new DrawMessage { type = "LEAVE", roomId = _roomId };
+            ClientSocket.Instance.Send(leaveMsg);
+            GoBackToLobby?.Invoke();
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
