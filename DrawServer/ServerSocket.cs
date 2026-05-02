@@ -79,31 +79,55 @@ namespace DrawServer
 
         private void HandleMessage(TcpClient client, string msg)
         {
-            DrawMessage data;
-
+            // thử parse DrawMessage
             try
             {
-                data = JsonSerializer.Deserialize<DrawMessage>(msg);
+                var draw = JsonSerializer.Deserialize<DrawMessage>(msg);
+
+                if (draw != null && !string.IsNullOrEmpty(draw.type))
+                {
+                    if (draw.type == "JOIN")
+                    {
+                        var room = rooms.GetOrAdd(draw.roomId,
+                            _ => new ConcurrentDictionary<TcpClient, byte>());
+
+                        room[client] = 0;
+
+                        Console.WriteLine($"Client joined room {draw.roomId}");
+                        return;
+                    }
+
+                    // broadcast line
+                    Broadcast(draw.roomId, msg + "\n", client);
+                    return;
+                }
             }
-            catch
+            catch { }
+            // thử parse DrawEvent
+            try
             {
-                return;
+                var drawEvent = JsonSerializer.Deserialize<DrawEvent>(msg);
+
+                if (drawEvent != null && !string.IsNullOrEmpty(drawEvent.type))
+                {
+                    // join
+                    if (drawEvent.type == "JOIN")
+                    {
+                        var room = rooms.GetOrAdd(drawEvent.roomId,
+                            _ => new ConcurrentDictionary<TcpClient, byte>());
+
+                        room[client] = 0;
+
+                        Console.WriteLine($"Client joined room {drawEvent.roomId}");
+                        return;
+                    }
+
+                    // broadcast brush event
+                    Broadcast(drawEvent.roomId, msg + "\n", client);
+                    return;
+                }
             }
-
-            if (data == null) return;
-
-            if (data.type == "JOIN")
-            {
-                var room = rooms.GetOrAdd(data.roomId,
-                    _ => new ConcurrentDictionary<TcpClient, byte>());
-
-                room[client] = 0;
-            }
-
-            else
-            {
-                Broadcast(data.roomId, msg + "\n", client);
-            }
+            catch { }
         }
 
         private void Broadcast(string roomId, string msg, TcpClient sender)

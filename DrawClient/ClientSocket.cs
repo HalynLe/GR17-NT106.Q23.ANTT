@@ -16,24 +16,32 @@ namespace DrawClient
 
         private StringBuilder buffer = new StringBuilder();
 
-        public bool Connect(string ip, int port)
+        private string currentRoomId;
+
+        public bool Connect(string ip, int port, string roomId)
         {
             try
             {
                 client = new TcpClient();
+                client.NoDelay = true;
+
                 client.Connect(ip, port);
 
                 stream = client.GetStream();
+                currentRoomId = roomId;
 
-                SendInternal(new DrawMessage
+                // JOIN
+                Send(new DrawMessage
                 {
                     type = "JOIN",
-                    roomId = "room1"
+                    roomId = currentRoomId
                 });
 
                 receiveThread = new Thread(ReceiveLoop);
                 receiveThread.IsBackground = true;
                 receiveThread.Start();
+
+                Console.WriteLine("Connected to server");
 
                 return true;
             }
@@ -54,10 +62,9 @@ namespace DrawClient
                 while (client.Connected)
                 {
                     int len = stream.Read(data, 0, data.Length);
-                    if (len <= 0) continue;
+                    if (len <= 0) break;
 
                     buffer.Append(Encoding.UTF8.GetString(data, 0, len));
-
                     ProcessBuffer();
                 }
             }
@@ -87,17 +94,11 @@ namespace DrawClient
         #region SEND
         public void Send(object obj)
         {
-            string json = JsonSerializer.Serialize(obj);
-            SendInternal(json);
-        }
-
-        private void SendInternal(object obj)
-        {
             try
             {
-                if (stream == null) return;
+                if (stream == null || !client.Connected) return;
 
-                string json = obj is string s ? s : JsonSerializer.Serialize(obj);
+                string json = JsonSerializer.Serialize(obj);
 
                 byte[] data = Encoding.UTF8.GetBytes(json + "\n");
                 stream.Write(data, 0, data.Length);
@@ -114,23 +115,30 @@ namespace DrawClient
         {
             try
             {
-                var data = JsonSerializer.Deserialize<DrawMessage>(msg);
-
-                if (data == null) return;
-
-                switch (data.type)
+                var draw = JsonSerializer.Deserialize<DrawMessage>(msg);
+                if (draw != null && !string.IsNullOrEmpty(draw.type))
                 {
-                    case "DRAW":
-                    case "stroke_move":
-                    case "stroke_start":
-                    case "stroke_end":
-                        OnMessageReceived?.Invoke(msg);
-                        break;
+                    OnMessageReceived?.Invoke(msg);
+                    return;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                Console.WriteLine("INVALID JSON: " + msg);
+                Console.WriteLine("Parse DrawMessage error: " + ex.Message);
+            }
+
+            try
+            {
+                var evt = JsonSerializer.Deserialize<DrawEvent>(msg);
+                if (evt != null && !string.IsNullOrEmpty(evt.type))
+                {
+                    OnMessageReceived?.Invoke(msg);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Parse DrawEvent error: " + ex.Message);
             }
         }
         #endregion
