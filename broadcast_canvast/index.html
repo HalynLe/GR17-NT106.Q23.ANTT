@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Canvas Realtime</title>
+</head>
+<body>
+
+<canvas id="board" width="800" height="500" style="border:1px solid black"></canvas>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<script>
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+
+const socket = io("http://localhost:3000");
+
+// config
+const ROOM_ID = "phong_ve_01";
+const USERNAME = "user_" + Math.floor(Math.random() * 1000);
+
+// join room
+socket.emit("join_room", ROOM_ID);
+
+
+// ====== NHẬN BROADCAST → VẼ ======
+socket.on("draw", (msg) => {
+    if (msg.room_id !== ROOM_ID) return;
+
+    // tránh vẽ lại chính mình (optional)
+    if (msg.username === USERNAME) return;
+
+    if (msg.type === "draw" && msg.command === "line") {
+        drawLine(msg.data);
+    }
+});
+
+// ====== HÀM VẼ ======
+function drawLine(data) {
+    const { x1, y1, x2, y2, color, thickness } = data;
+
+    ctx.strokeStyle = color || "#000";
+    ctx.lineWidth = thickness || 2;
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+}
+
+
+// ====== PHẦN TEST: VẼ & GỬI ======
+let isDrawing = false;
+let prevX = 0;
+let prevY = 0;
+
+canvas.addEventListener("mousedown", (e) => {
+    isDrawing = true;
+    prevX = e.offsetX;
+    prevY = e.offsetY;
+});
+
+canvas.addEventListener("mouseup", () => {
+    isDrawing = false;
+});
+
+canvas.addEventListener("mousemove", (e) => {
+    if (!isDrawing) return;
+
+    const x = e.offsetX;
+    const y = e.offsetY;
+
+    const msg = {
+        type: "draw",
+        command: "line",
+        room_id: ROOM_ID,
+        username: USERNAME,
+        seq: Date.now(),
+        data: {
+            x1: prevX,
+            y1: prevY,
+            x2: x,
+            y2: y,
+            color: "#FF5733",
+            thickness: 4
+        }
+    };
+
+    // vẽ local
+    drawLine(msg.data);
+
+    // gửi lên server
+    socket.emit("draw", msg);
+
+    prevX = x;
+    prevY = y;
+});
+</script>
+
+</body>
+</html>
