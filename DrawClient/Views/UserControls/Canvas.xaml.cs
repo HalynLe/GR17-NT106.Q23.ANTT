@@ -35,16 +35,8 @@ namespace DrawClient.Views.UserControls
 
         private void Canvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            // Bắt chuột để nhận sự kiện kể cả khi rê ra ngoài viền
-            MyCanvas.CaptureMouse();
             isDrawing = true;
-
-            // Lấy tọa độ và ép ngay vào trong viền để nét vẽ không bị lỗi từ điểm xuất phát
-            Point rawPoint = e.GetPosition(MyCanvas);
-            double safeX = Math.Max(0, Math.Min(rawPoint.X, MyCanvas.ActualWidth));
-            double safeY = Math.Max(0, Math.Min(rawPoint.Y, MyCanvas.ActualHeight));
-
-            lastPoint = new Point(safeX, safeY);
+            lastPoint = e.GetPosition(MyCanvas);
         }
 
         private void Canvas_MouseMove(object sender, MouseEventArgs e)
@@ -52,24 +44,15 @@ namespace DrawClient.Views.UserControls
             if (!isDrawing || e.LeftButton != MouseButtonState.Pressed || _viewModel == null)
                 return;
 
-            Point rawPoint = e.GetPosition(MyCanvas);
+            Point currentPoint = e.GetPosition(MyCanvas);
 
-            // Ép tọa độ X và Y không được vượt quá giới hạn của Canvas
-            double safeX = Math.Max(0, Math.Min(rawPoint.X, MyCanvas.ActualWidth));
-            double safeY = Math.Max(0, Math.Min(rawPoint.Y, MyCanvas.ActualHeight));
+            // Gọi hàm DrawLineLocal để vẽ nội bộ vì InkCanvas đã bị đặt thành EditingMode="None"
+            DrawLineLocal(lastPoint, currentPoint, _viewModel.CurrentColor, _viewModel.CurrentThickness);
 
-            Point currentPoint = new Point(safeX, safeY);
+            // Gửi dữ liệu qua mạng cho người khác
+            _viewModel.SendDrawData(lastPoint, currentPoint);
 
-            if (currentPoint != lastPoint)
-            {
-                // vẽ local
-                DrawLineLocal(lastPoint, currentPoint, _viewModel.CurrentColor, _viewModel.CurrentThickness);
-
-                // gửi data
-                _viewModel.SendDrawData(lastPoint, currentPoint);
-
-                lastPoint = currentPoint;
-            }
+            lastPoint = currentPoint;
         }
 
         private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
