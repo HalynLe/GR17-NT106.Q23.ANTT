@@ -57,7 +57,7 @@ namespace DrawClient.ViewModels
         private string _currentPenType = "Brush";
         public string CurrentPenType { get => _currentPenType; set { _currentPenType = value; OnPropertyChanged(); } }
 
-        private InkCanvasEditingMode _currentEditingMode = InkCanvasEditingMode.Ink;
+        private InkCanvasEditingMode _currentEditingMode = InkCanvasEditingMode.Select;
         public InkCanvasEditingMode CurrentEditingMode { get => _currentEditingMode; set { _currentEditingMode = value; OnPropertyChanged(); } }
 
         private bool _isSidebarOpen = true;
@@ -69,7 +69,7 @@ namespace DrawClient.ViewModels
         private string _currentColor = "#000000";
         public string CurrentColor { get => _currentColor; set { _currentColor = value; OnPropertyChanged(); } }
 
-        private double _penThickness = 4.0;
+        private double _penThickness = 1.0;
         public double PenThickness
         {
             get => _penThickness;
@@ -96,7 +96,7 @@ namespace DrawClient.ViewModels
         private string _currentUserInitials;
         public string CurrentUserInitials { get => _currentUserInitials; set { _currentUserInitials = value; OnPropertyChanged(); } }
 
-        private string _selectedTool = "pen";
+        private string _selectedTool = "select";
         public string SelectedTool
         {
             get => _selectedTool;
@@ -346,10 +346,9 @@ namespace DrawClient.ViewModels
                     Toolbar.IsEraserSelected = false;
                     Toolbar.CurrentColor = CurrentColor;
                     Toolbar.CurrentThickness = Toolbar.PencilSize;
-                    if (CurrentColor == "#FFFFFF")
+                    if (string.IsNullOrEmpty(Toolbar.CurrentPenType) || IsShapeTool(Toolbar.CurrentPenType))
                     {
-                        CurrentColor = _previousColor;
-                        Toolbar.CurrentColor = _previousColor;
+                        Toolbar.CurrentPenType = "brush";
                     }
                     break;
 
@@ -357,15 +356,27 @@ namespace DrawClient.ViewModels
                     CurrentEditingMode = InkCanvasEditingMode.EraseByPoint;
                     Toolbar.IsEraserSelected = true;   
                     Toolbar.IsPencilSelected = false;
-
+                    Toolbar.CurrentPenType = "eraser";
                     Toolbar.CurrentThickness = Toolbar.EraserSize;
                     break;
                 case "shape":
-                    CurrentEditingMode = InkCanvasEditingMode.None; // hoặc Select tùy thiết kế
+                    CurrentEditingMode = InkCanvasEditingMode.None;
                     Toolbar.IsPencilSelected = false;
                     Toolbar.IsEraserSelected = false;
+                    Toolbar.CurrentThickness = Toolbar.CurrentShapeThickness;
+
+                    var shapes = new System.Collections.Generic.List<string> { "square", "circle", "triangle", "line", "rectangle", "ellipse" };
+                    if (!shapes.Contains(Toolbar.CurrentPenType?.ToLowerInvariant()))
+                    {
+                        Toolbar.CurrentPenType = "rectangle";
+                    }
                     break;
             }
+        }
+        private bool IsShapeTool(string tool)
+        {
+            var shapes = new System.Collections.Generic.List<string> { "square", "rectangle", "circle", "ellipse", "triangle", "line" };
+            return shapes.Contains(tool?.ToLowerInvariant());
         }
 
         public event PropertyChangedEventHandler PropertyChanged;

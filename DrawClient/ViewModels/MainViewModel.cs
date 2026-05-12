@@ -16,8 +16,8 @@ namespace DrawClient.ViewModels
         public MainViewModel()
         {
             // Khi app vừa chạy lên, mở màn hình Login đầu tiên
-            //NavigateToLogin();
             NavigateToLogin();
+            //NavigateToCanvas("hi", "123", "123456");
         }
 
         // Các hàm điều hướng

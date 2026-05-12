@@ -60,6 +60,7 @@ namespace DrawClient.ViewModels.Canvas
             }
         }
 
+        // Popup Shapes
         public bool IsShapePopupOpen
         {
             get => _isShapePopupOpen;
@@ -78,6 +79,7 @@ namespace DrawClient.ViewModels.Canvas
                 OnPropertyChanged();
             }
         }
+
 
         public bool IsTextPopupOpen
         {
@@ -148,7 +150,7 @@ namespace DrawClient.ViewModels.Canvas
             ExecuteChangeColor(hexColor);
         }
         // ================= TOOL SELECTION (HIGHLIGHT FIX) =================
-        private bool _isPencilSelected = true;
+        private bool _isPencilSelected = false;
         public bool IsPencilSelected
         {
             get => _isPencilSelected;
@@ -192,7 +194,7 @@ namespace DrawClient.ViewModels.Canvas
         }
         // ================= SIZE =================
 
-        private double _pencilSize = 4;
+        private double _pencilSize = 2;
         public double PencilSize
         {
             get => _pencilSize;
@@ -216,7 +218,7 @@ namespace DrawClient.ViewModels.Canvas
             }
         }
 
-        private double _currentThickness = 2.0;
+        private double _currentThickness = 1.0;
         public double CurrentThickness
         {
             get => _currentThickness;
@@ -227,6 +229,28 @@ namespace DrawClient.ViewModels.Canvas
             }
         }
 
+        private string _currentShapeColor = "#000000";
+        public string CurrentShapeColor
+        {
+            get => _currentShapeColor;
+            set
+            {
+                _currentShapeColor = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CurrentShapeColorBrush));
+            }
+        }
+        public SolidColorBrush CurrentShapeColorBrush => (SolidColorBrush)new BrushConverter().ConvertFromString(CurrentShapeColor ?? "#000000");
+        private double _currentShapeThickness = 1.0;
+        public double CurrentShapeThickness
+        {
+            get => _currentShapeThickness;
+            set
+            {
+                _currentShapeThickness = value;
+                OnPropertyChanged();
+            }
+        }
         // FIX: method không còn tham số (tránh lỗi compile)
         private void UpdateCurrentSize()
         {
@@ -271,6 +295,9 @@ namespace DrawClient.ViewModels.Canvas
                                                    // THÊM VÀO PHẦN KHAI BÁO COMMAND:
         public ICommand ChangePenTypeCommand { get; }
         public ICommand ChangeColorCommand { get; }
+        public ICommand ChangeShapeColorCommand { get; }
+        public ICommand ChangeShapeThicknessCommand { get; }
+
 
         public SolidColorBrush CurrentColorBrush =>
             (SolidColorBrush)new BrushConverter().ConvertFromString(CurrentColor ?? "#000000");
@@ -281,6 +308,8 @@ namespace DrawClient.ViewModels.Canvas
             ChangeSizeCommand = new RelayCommand<string>(ExecuteChangeSize);
             ChangePenTypeCommand = new RelayCommand<string>(ExecuteChangePenType);
             ChangeColorCommand = new RelayCommand<string>(ExecuteChangeColor);
+            ChangeShapeColorCommand = new RelayCommand<string>(ExecuteChangeShapeColor);
+            ChangeShapeThicknessCommand = new RelayCommand<string>(ExecuteChangeShapeThickness);
             // Khởi tạo Command
         }
 
@@ -316,8 +345,19 @@ namespace DrawClient.ViewModels.Canvas
             OnPropertyChanged(nameof(CurrentColorBrush)); // Báo cho giao diện cập nhật màu của cục size
             ToolSelected?.Invoke(this, "ColorChanged");
         }
-
-
+        public void ExecuteChangeShapeColor(string hexColor)
+        {
+            CurrentShapeColor = hexColor;
+            ToolSelected?.Invoke(this, "shape"); // Đảm bảo tool shape luôn active khi đổi màu
+        }
+        public void ExecuteChangeShapeThickness(string thicknessStr)
+        {
+            if (double.TryParse(thicknessStr, out double thickness))
+            {
+                CurrentShapeThickness = thickness; // Gán vào biến độ dày riêng của Shape
+                ToolSelected?.Invoke(this, "shape");
+            }
+        }
         // ================= INotifyPropertyChanged =================
 
         public event PropertyChangedEventHandler PropertyChanged;

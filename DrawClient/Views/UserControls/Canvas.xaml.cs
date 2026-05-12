@@ -35,8 +35,8 @@ namespace DrawClient.Views.UserControls
             {
                 FitToCurve = true,
                 IgnorePressure = true,
-                Width = 4,
-                Height = 4,
+                Width = 2,
+                Height = 2,
                 Color = Colors.Black
             };
         }
@@ -189,6 +189,10 @@ namespace DrawClient.Views.UserControls
                 {
                     MyCanvas.EditingMode = InkCanvasEditingMode.None;
                     return;
+                }
+                else if (_viewModel.SelectedTool?.ToLower() == "select")
+                {
+                    MyCanvas.EditingMode = InkCanvasEditingMode.Select;
                 }
                 else
                 {
@@ -376,9 +380,16 @@ namespace DrawClient.Views.UserControls
                 {
                     _currentTempStroke = new Stroke(points)
                     {
-                        DrawingAttributes = MyCanvas.DefaultDrawingAttributes.Clone()
+                        // Khởi tạo thuộc tính riêng cho Shape để không dính tới bút
+                        DrawingAttributes = new DrawingAttributes
+                        {
+                            Color = (Color)ColorConverter.ConvertFromString(_viewModel.Toolbar.CurrentShapeColor),
+                            Width = _viewModel.Toolbar.CurrentShapeThickness,
+                            Height = _viewModel.Toolbar.CurrentShapeThickness,
+                            FitToCurve = false,
+                            IgnorePressure = true
+                        }
                     };
-                    _currentTempStroke.DrawingAttributes.FitToCurve = false;
                     MyCanvas.Strokes.Add(_currentTempStroke);
                 }
                 return;
@@ -461,8 +472,8 @@ namespace DrawClient.Views.UserControls
                     x2 = endPoint.X,
                     y2 = endPoint.Y,
 
-                    color = _viewModel.Toolbar.CurrentColor,
-                    thickness = _viewModel.Toolbar.CurrentThickness
+                    color = _viewModel.Toolbar.CurrentShapeColor,
+                    thickness = _viewModel.Toolbar.CurrentShapeThickness
                 });
 
                 isShapeDrawing = false;

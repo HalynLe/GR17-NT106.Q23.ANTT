@@ -12,37 +12,46 @@
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
         <converters:HexToBrushConverter x:Key="HexToBrushConverter"/>
         <Style x:Key="PenTypeRadioStyle" TargetType="RadioButton">
-            <Setter Property="Background" Value="#F3F4F6"/>
+            <Setter Property="Foreground" Value="#5F6368"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="2"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border Background="{TemplateBinding Background}" BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}" CornerRadius="8">
+                        <Border Background="{TemplateBinding Background}" BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}" CornerRadius="20">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter Property="Background" Value="#E8F0FE"/>
-                                <Setter Property="BorderBrush" Value="#1A73E8"/>
+                                <Setter Property="Foreground" Value="#1A73E8"/>
                             </Trigger>
+
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsChecked" Value="False"/>
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Background" Value="#F1F3F4"/>
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
         <Style x:Key="ColorRadioStyle" TargetType="RadioButton">
-            <Setter Property="Width" Value="32"/>
-            <Setter Property="Height" Value="32"/>
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
             <Setter Property="Margin" Value="0,0,10,0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
                         <Grid>
-                            <Ellipse x:Name="OuterRing" Width="32" Height="32" Stroke="Transparent" StrokeThickness="2"/>
-                            <Ellipse x:Name="InnerColor" Width="22" Height="22" Fill="{TemplateBinding Background}"/>
+                            <Ellipse x:Name="OuterRing" Width="30" Height="30" Stroke="Transparent" StrokeThickness="2"/>
+                            <Ellipse x:Name="InnerColor" Width="20" Height="20" Fill="{TemplateBinding Background}"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
@@ -137,7 +146,6 @@
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter Property="Background" Value="#E8F0FE"/>
                                 <Setter Property="Foreground" Value="#1A73E8"/>
-                                <Setter TargetName="ToolIcon" Property="StrokeThickness" Value="2.5"/>
                             </Trigger>
 
                             <MultiTrigger>
@@ -331,7 +339,7 @@
                     Background="Transparent"
                     BorderThickness="0"
                     Cursor="Hand"
-                    Margin="0,0,20,0"
+                    Margin="10,0,20,0"
                     FocusVisualStyle="{x:Null}">
 
                         <Button.ToolTip>
@@ -630,14 +638,14 @@
 
                 </InkCanvas>
 
-                <Canvas Panel.ZIndex="2" IsHitTestVisible="False">
+                <Canvas x:Name="OverlayCanvas" Panel.ZIndex="2" IsHitTestVisible="False">
 
                     <Canvas Canvas.Left="350" Canvas.Top="200"/>
 
                     <Canvas Canvas.Left="700" Canvas.Top="320"/>
                 </Canvas>
                 <!-- SIDEBAR -->
-                <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="20,0,0,41"
+                <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20,138,0,0"
             Background="#FFFFFF"
             CornerRadius="24"
             Padding="4,12"
@@ -678,6 +686,7 @@
                          Style="{StaticResource RadioToolStyle}"
                          Command="{Binding SelectToolCommand}"
                          CommandParameter="select"
+                         IsChecked="True"
                          Content="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>
 
                         <!-- PEN -->
@@ -703,7 +712,7 @@
                Style="{StaticResource RadioToolStyle}"
                Command="{Binding Toolbar.TogglePopupCommand}"
                CommandParameter="Eraser"
-               Content="M16 3L21 8L9 20H4V15L16 3Z"
+               Content="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21 M22 21H7 M5 11l9 9"
                Focusable="False"
                IsChecked="{Binding Toolbar.IsEraserSelected, Mode=TwoWay}"/>
 
@@ -767,36 +776,36 @@
                         </Border.Effect>
 
                         <StackPanel>
-                            <TextBlock Text="Tool" FontSize="16" FontWeight="SemiBold" Foreground="#374151"/>
+                            <TextBlock Text="TOOL" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,0,0,0"/>
 
-                            <StackPanel Orientation="Horizontal" Margin="0,16,0,20">
-                                <RadioButton Width="48" Height="48" Margin="0,0,10,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Brush" IsChecked="True">
-                                    <TextBlock Text="🖌" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <RadioButton Width="40" Height="40" Margin="0,0,8,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Brush" IsChecked="True">
+                                    <TextBlock Text="🖌" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </RadioButton>
 
-                                <RadioButton Width="48" Height="48" Margin="0,0,10,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Fountain">
-                                    <TextBlock Text="✒" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <RadioButton Width="40" Height="40" Margin="0,0,8,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Fountain">
+                                    <TextBlock Text="✒" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </RadioButton>
 
-                                <RadioButton Width="48" Height="48" Margin="0,0,10,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Highlighter">
-                                    <TextBlock Text="🖍" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <RadioButton Width="40" Height="40" Margin="0,0,8,0" Style="{StaticResource PenTypeRadioStyle}" GroupName="PenTools" Command="{Binding ChangePenTypeCommand}" CommandParameter="Highlighter">
+                                    <TextBlock Text="🖍" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </RadioButton>
 
-                                <RadioButton Width="48" Height="48" GroupName="PenTools" Style="{StaticResource PenTypeRadioStyle}" Command="{Binding ChangePenTypeCommand}" CommandParameter="Laser" ToolTip="Laser Pointer">
+                                <RadioButton Width="40" Height="40" Margin="0,0,8,0" GroupName="PenTools" Style="{StaticResource PenTypeRadioStyle}" Command="{Binding ChangePenTypeCommand}" CommandParameter="Laser" ToolTip="Laser Pointer">
                                     <Path Data="M7.5,5.6L5,7L6.4,4.5L5,2L7.5,3.4L10,2L8.6,4.5L10,7L7.5,5.6 M19.5,15.4L22,14L20.6,16.5L22,19L19.5,17.6L17,19L18.4,16.5L17,14L19.5,15.4 M22,2L3.3,20.7L2,19.4L20.7,0.7L22,2Z" 
                                           Fill="#5F6368" 
                                           Stretch="Uniform" 
-                                          Width="22" 
-                                          Height="22" 
+                                          Width="18" 
+                                          Height="18" 
                                           HorizontalAlignment="Center" 
                                           VerticalAlignment="Center"/>
                                 </RadioButton>
 
                             </StackPanel>
 
-                            <TextBlock Text="Size" FontSize="16" FontWeight="SemiBold" Foreground="#374151"/>
+                            <TextBlock Text="SIZE" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,8,0,0"/>
 
-                            <StackPanel Orientation="Horizontal" Margin="0,18,0,20">
+                            <StackPanel Orientation="Horizontal" Margin="4,8,0,0">
                                 <StackPanel.Resources>
                                     <Style x:Key="PenSizeDotRadioStyle" TargetType="RadioButton">
                                         <Setter Property="Cursor" Value="Hand"/>
@@ -837,13 +846,12 @@
                                 </RadioButton>
                             </StackPanel>
 
-                            <TextBlock Text="Color" FontSize="16" FontWeight="SemiBold" Foreground="#374151"/>
+                            <TextBlock Text="COLOR" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,8,0,0"/>
 
-                            <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                 <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#000000" GroupName="PenColors" Command="{Binding Toolbar.ChangeColorCommand}" CommandParameter="#000000" IsChecked="True"/>
                                 <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#22C55E" GroupName="PenColors" Command="{Binding Toolbar.ChangeColorCommand}" CommandParameter="#22C55E"/>
                                 <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#3B82F6" GroupName="PenColors" Command="{Binding Toolbar.ChangeColorCommand}" CommandParameter="#3B82F6"/>
-                                <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#EAB308" GroupName="PenColors" Command="{Binding Toolbar.ChangeColorCommand}" CommandParameter="#EAB308"/>
                                 <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#EF4444" GroupName="PenColors" Command="{Binding Toolbar.ChangeColorCommand}" CommandParameter="#EF4444"/>
 
                                 <ItemsControl ItemsSource="{Binding Toolbar.RecentColors}">
@@ -1005,7 +1013,7 @@
                     <Border Background="#FFFFFF" 
                       CornerRadius="12" 
                       Padding="16" 
-                      Width="220">
+                      Width="280">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.15" Color="#3C4043"/>
                         </Border.Effect>
@@ -1033,35 +1041,93 @@
                                Command="{Binding Toolbar.ChangePenTypeCommand}" CommandParameter="line"
                                Content="M 2 12 L 22 12"/>
                             </StackPanel>
+                            <TextBlock Text="STROKE SIZE" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,0,0,0"/>
+                            <StackPanel Orientation="Horizontal" Margin="4,8,0,0">
+                                <StackPanel.Resources>
+                                    <Style x:Key="SizeDotRadioStyle" TargetType="RadioButton">
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                        <Setter Property="Margin" Value="0,0,14,0"/>
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="RadioButton">
+                                                    <Grid Width="{TemplateBinding Width}" Height="{TemplateBinding Height}" Background="Transparent">
+                                                        <Ellipse x:Name="OuterBorder" Stroke="Transparent" StrokeThickness="2" Fill="Transparent"/>
+                                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Grid>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsChecked" Value="True">
+                                                            <Setter TargetName="OuterBorder" Property="Stroke" Value="#1A73E8"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </StackPanel.Resources>
 
+                                <RadioButton Width="16" Height="16" GroupName="ShapeSizeGroup" Tag="2" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeShapeThicknessCommand}" CommandParameter="2" IsChecked="True">
+                                    <Ellipse Width="6" Height="6" Fill="{Binding Toolbar.CurrentShapeColor, Converter={StaticResource HexToBrushConverter}}"/>
+                                </RadioButton>
+                                <RadioButton Width="20" Height="20" GroupName="ShapeSizeGroup" Tag="6" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeShapeThicknessCommand}" CommandParameter="6">
+                                    <Ellipse Width="10" Height="10" Fill="{Binding Toolbar.CurrentShapeColor, Converter={StaticResource HexToBrushConverter}}"/>
+                                </RadioButton>
+                                <RadioButton Width="24" Height="24" GroupName="ShapeSizeGroup" Tag="12" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeShapeThicknessCommand}" CommandParameter="12">
+                                    <Ellipse Width="14" Height="14" Fill="{Binding Toolbar.CurrentShapeColor, Converter={StaticResource HexToBrushConverter}}"/>
+                                </RadioButton>
+                                <RadioButton Width="28" Height="28" GroupName="ShapeSizeGroup" Tag="18" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeShapeThicknessCommand}" CommandParameter="18">
+                                    <Ellipse Width="18" Height="18" Fill="{Binding Toolbar.CurrentShapeColor, Converter={StaticResource HexToBrushConverter}}"/>
+                                </RadioButton>
+                                <RadioButton Width="32" Height="32" GroupName="ShapeSizeGroup" Tag="24" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeShapeThicknessCommand}" CommandParameter="24">
+                                    <Ellipse Width="22" Height="22" Fill="{Binding Toolbar.CurrentShapeColor, Converter={StaticResource HexToBrushConverter}}"/>
+                                </RadioButton>
+                            </StackPanel>
+                            
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="12"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="FILL" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,0,0,8"/>
-                                    <Button Command="{Binding ToggleShapeFillPaletteCommand}" Style="{StaticResource OutlinedColorButtonStyle}" Background="Transparent" BorderBrush="#DADCE0" BorderThickness="1" Padding="5" HorizontalContentAlignment="Stretch">
-                                        <Border Height="20" Background="#FF1AE8C3" CornerRadius="4" SnapsToDevicePixels="True"/>
-                                    </Button>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="STROKE" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,0,0,8" />
-                                    <Button Command="{Binding ChooseColorCommand}" Style="{StaticResource OutlinedColorButtonStyle}" Background="Transparent" BorderBrush="#DADCE0" BorderThickness="1" Padding="5" HorizontalContentAlignment="Stretch">
-                                        <Border Height="20" Background="{Binding CurrentColor, Converter={StaticResource HexToBrushConverter}}" CornerRadius="4" SnapsToDevicePixels="True"/>
-                                    </Button>
+                                <StackPanel Orientation="Vertical" Margin="0,8,0,8">
+                                    <TextBlock Text="STROKE COLOR" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,0,0,8" />
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                        <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#000000" GroupName="ShapeColors" Command="{Binding Toolbar.ChangeShapeColorCommand}" CommandParameter="#000000" IsChecked="True"/>
+                                        <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#22C55E" GroupName="ShapeColors" Command="{Binding Toolbar.ChangeShapeColorCommand}" CommandParameter="#22C55E"/>
+                                        <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#3B82F6" GroupName="ShapeColors" Command="{Binding Toolbar.ChangeShapeColorCommand}" CommandParameter="#3B82F6"/>
+                                        <RadioButton Style="{StaticResource ColorRadioStyle}" Background="#EF4444" GroupName="ShapeColors" Command="{Binding Toolbar.ChangeShapeColorCommand}" CommandParameter="#EF4444"/>
+
+                                        <ItemsControl ItemsSource="{Binding Toolbar.RecentColors}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal"/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <RadioButton Style="{StaticResource ColorRadioStyle}" 
+                                                         Background="{Binding Converter={StaticResource HexToBrushConverter}}" 
+                                                         GroupName="PenColors" 
+                                                         Command="{Binding DataContext.Toolbar.ChangeColorCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" 
+                                                         CommandParameter="{Binding}"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <Button Width="32" Height="32" Background="Transparent" BorderBrush="#D1D5DB" BorderThickness="1" Cursor="Hand" Click="OpenColorPicker_Click" ToolTip="Add Custom Color">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border CornerRadius="16" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Background="{TemplateBinding Background}">
+                                                        <TextBlock Text="+" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#6B7280" Margin="0,-2,0,0"/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="#F3F4F6"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                        </Button>
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
-
-                            <TextBlock Text="SIZE" FontSize="12" FontWeight="Medium" Foreground="#5F6368" Margin="0,16,0,8"/>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                                <RadioButton GroupName="ShapeSizeGroup" Tag="2" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeThicknessCommand}" CommandParameter="2"/>
-                                <RadioButton GroupName="ShapeSizeGroup" Tag="6" IsChecked="True" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeThicknessCommand}" CommandParameter="6"/>
-                                <RadioButton GroupName="ShapeSizeGroup" Tag="12" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeThicknessCommand}" CommandParameter="12"/>
-                                <RadioButton GroupName="ShapeSizeGroup" Tag="18" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeThicknessCommand}" CommandParameter="18"/>
-                                <RadioButton GroupName="ShapeSizeGroup" Tag="24" Style="{StaticResource SizeDotRadioStyle}" Command="{Binding Toolbar.ChangeThicknessCommand}" CommandParameter="24"/>
-                            </StackPanel>
+                            
                         </StackPanel>
                     </Border>
                 </Popup>
@@ -1203,8 +1269,9 @@
             </Border>
         </Grid>
 
-        <Border HorizontalAlignment="Left" VerticalAlignment="Top" 
-                Margin="316,630,0,0" Padding="24,12" MinWidth="220" 
+        <!-- ================= OCR TOAST NOTIFICATION ================= -->
+        <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" 
+                Margin="0,0,0,40" Padding="24,12" MinWidth="220"  
                 Background="#202124" CornerRadius="22" Panel.ZIndex="999"
                 Visibility="{Binding IsOcrToastVisible, Converter={StaticResource BoolToVis}}"
                 d:Visibility="Visible" Grid.Row="1" Width="284" Height="53">
