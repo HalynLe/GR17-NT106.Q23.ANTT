@@ -60,7 +60,7 @@ namespace DrawClient.ViewModels
         private InkCanvasEditingMode _currentEditingMode = InkCanvasEditingMode.Select;
         public InkCanvasEditingMode CurrentEditingMode { get => _currentEditingMode; set { _currentEditingMode = value; OnPropertyChanged(); } }
 
-        private bool _isSidebarOpen = true;
+        private bool _isSidebarOpen = false;
         public GridLength RightSidebarWidth => _isSidebarOpen ? new GridLength(320) : new GridLength(0);
 
         private bool _isProfilePopoverVisible;
