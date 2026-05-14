@@ -36,67 +36,78 @@ namespace DrawServer
             server.Start();
             Console.WriteLine($"[NODE SERVER] Đang chạy tại cổng: {port}...");
 
-            new Thread(() =>
+            Task.Run(() => AcceptClientsAsync());
+        }
+
+        private async Task AcceptClientsAsync()
+        {
+            while (true)
             {
-                while (true)
+                try
                 {
-                    try
-                    {
-                        var client = server.AcceptTcpClient();
-                        client.NoDelay = true; // Gửi dữ liệu ngay lập tức, giảm delay khi vẽ
-                        Console.WriteLine("Có một Client mới kết nối vào Node.");
-                        new Thread(() => HandleClient(client)).Start();
-                    }
-                    catch (Exception ex) { Console.WriteLine("Lỗi Accept: " + ex.Message); }
+                    // Lắng nghe bất đồng bộ, giải phóng CPU khi không có ai kết nối
+                    var client = await server.AcceptTcpClientAsync();
+                    client.NoDelay = true;
+                    Console.WriteLine("Có một Client mới kết nối vào Node.");
+
+                    // Giao Client này cho 1 Task độc lập xử lý
+                    _ = Task.Run(() => HandleClientAsync(client));
                 }
-            })
-            { IsBackground = true }.Start();
+                catch (Exception ex) { Console.WriteLine("Lỗi Accept: " + ex.Message); }
+            }
         }
 
         // Trong ServerSocket.cs - Phương thức HandleClient
-        private void HandleClient(TcpClient client)
+        private async Task HandleClientAsync(TcpClient client)
         {
-            NetworkStream stream = client.GetStream();
-            byte[] bytes = new byte[8192]; // Buffer lớn hơn một chút
-            StringBuilder messageBuffer = new StringBuilder();
-
-            try
+            using (NetworkStream stream = client.GetStream())
             {
-                int i;
-                while ((i = stream.Read(bytes, 0, bytes.Length)) != 0)
+                byte[] bytes = new byte[8192]; // Buffer lớn hơn một chút
+                StringBuilder messageBuffer = new StringBuilder();
+
+                try
                 {
-                    string data = Encoding.UTF8.GetString(bytes, 0, i);
-                    messageBuffer.Append(data);
-
-                    // Xử lý tất cả các tin nhắn hoàn chỉnh trong buffer (kết thúc bằng \n)
-                    string currentContent = messageBuffer.ToString();
-                    int nextLineIndex;
-                    while ((nextLineIndex = currentContent.IndexOf('\n')) != -1)
+                    int i;
+                    while ((i = await stream.ReadAsync(bytes, 0, bytes.Length)) != 0)
                     {
-                        string singleMessage = currentContent.Substring(0, nextLineIndex).Trim();
-                        if (!string.IsNullOrEmpty(singleMessage))
-                        {
-                            ProcessLogic(client, singleMessage); // Tách logic xử lý ra hàm riêng
-                        }
+                        string data = Encoding.UTF8.GetString(bytes, 0, i);
+                        messageBuffer.Append(data);
 
-                        currentContent = currentContent.Substring(nextLineIndex + 1);
-                        messageBuffer.Clear();
-                        messageBuffer.Append(currentContent);
+                        // Xử lý tất cả các tin nhắn hoàn chỉnh trong buffer (kết thúc bằng \n)
+                        string currentContent = messageBuffer.ToString();
+                        int nextLineIndex;
+
+                        while ((nextLineIndex = currentContent.IndexOf('\n')) != -1)
+                        {
+                            string singleMessage = currentContent.Substring(0, nextLineIndex).Trim();
+                            if (!string.IsNullOrEmpty(singleMessage))
+                            {
+                                ProcessLogic(client, singleMessage); // Tách logic xử lý ra hàm riêng
+                            }
+
+                            currentContent = currentContent.Substring(nextLineIndex + 1);
+                            messageBuffer.Clear();
+                            messageBuffer.Append(currentContent);
+                        }
                     }
                 }
-            }
-            catch (Exception ex) { /* Xử lý khi client ngắt kết nối */ }
-            finally
-            {
-                if (clientMetadata.TryRemove(client, out var metadata))
+
+                catch (Exception ex)
                 {
-                    _ = NotifyMasterStatusChanged(metadata.UserId, int.Parse(metadata.RoomId), false);
+                    Console.WriteLine($"[NODE SERVER] Client ngắt kết nối: {ex.Message}");
                 }
+                finally
+                {
+                    if (clientMetadata.TryRemove(client, out var metadata))
+                    {
+                        _ = NotifyMasterStatusChanged(metadata.UserId, int.Parse(metadata.RoomId), false);
+                    }
 
-                RemoveClientFromAllRooms(client);
-                client.Close();
+                    RemoveClientFromAllRooms(client);
+                    client.Close();
 
-                Console.WriteLine("Client disconnected + cleaned up");
+                    Console.WriteLine("Client disconnected + cleaned up");
+                }
             }
         }
         private void ProcessLogic(TcpClient client, string jsonMsg)

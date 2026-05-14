@@ -69,19 +69,20 @@ public class MasterServerBackgroundService : BackgroundService
         _server = new MasterServer.MasterServer();
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Chạy MasterServer trên một luồng riêng biệt để không chặn Web API
-        return Task.Run(() =>
+        try
         {
-            try
-            {
-                _server.Start(_port);
-            }
-            catch (System.Exception ex)
-            {
-                System.Console.WriteLine($"[CRITICAL] MasterServer gặp lỗi: {ex.Message}");
-            }
-        }, stoppingToken);
+            // Bật server lên (chạy độc lập dưới nền)
+            _server.Start(_port);
+
+            // Giữ cho BackgroundService sống mãi chừng nào ứng dụng Web API còn chạy
+            await Task.Delay(Timeout.Infinite, stoppingToken);
+        }
+        catch (System.Exception ex)
+        {
+            System.Console.WriteLine($"[CRITICAL] MasterServer gặp lỗi: {ex.Message}");
+        }
     }
 }

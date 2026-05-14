@@ -10,7 +10,7 @@ namespace MasterServer
 {
     public class MasterServer
     {
-        private TcpListener listener;
+        private TcpListener listener = null!;
 
         // Danh sách các Node (Game/Drawing Server) đang chạy
         private List<NodeInfo> nodes = new()
@@ -25,14 +25,23 @@ namespace MasterServer
 
             Console.WriteLine($"[MASTER SERVER] Đã khởi động. Lắng nghe Client tại port {port}...");
 
+            Task.Run(() => AcceptClientsAsync());
+        }
+
+        private async Task AcceptClientsAsync()
+        {
             while (true)
             {
-                var client = listener.AcceptTcpClient();
-                new Thread(() => HandleClient(client)).Start();
+                try
+                {
+                    var client = await listener.AcceptTcpClientAsync();
+                    _ = Task.Run(() => HandleClientAsync(client));
+                }
+                catch (Exception ex) { Console.WriteLine($"[MASTER SERVER] Lỗi Accept: {ex.Message}"); }
             }
         }
 
-        private void HandleClient(TcpClient client)
+        private async Task HandleClientAsync(TcpClient client)
         {
             var stream = client.GetStream();
             byte[] buffer = new byte[4096];
@@ -42,7 +51,7 @@ namespace MasterServer
             {
                 while (true)
                 {
-                    int len = stream.Read(buffer, 0, buffer.Length);
+                    int len = await stream.ReadAsync(buffer, 0, buffer.Length);
                     if (len <= 0) break; // Client đóng kết nối
 
                     sb.Append(Encoding.UTF8.GetString(buffer, 0, len));
@@ -64,7 +73,7 @@ namespace MasterServer
                             var node = GetBestNode();
 
                             // 1. Mở kết nối TCP tới Node Server để yêu cầu chuẩn bị phòng
-                            bool isNodeReady = NotifyNodeServer(node, req.roomId);
+                            bool isNodeReady = await NotifyNodeServerAsync(node, req.roomId);
 
                             if (isNodeReady)
                             {
@@ -76,7 +85,7 @@ namespace MasterServer
                                     nodePort = node.Port,
                                     roomId = req.roomId
                                 };
-                                Send(stream, res);
+                                await SendAsync(stream, res);
                                 Console.WriteLine($"[MASTER SERVER] Đã điều hướng Client tới Node {node.Ip}:{node.Port}");
                             }
                             else
@@ -89,7 +98,7 @@ namespace MasterServer
                                     nodePort = 0,
                                     roomId = req.roomId
                                 };
-                                Send(stream, res);
+                                await SendAsync(stream, res);
                                 Console.WriteLine($"[MASTER SERVER] LỖI: Node {node.Ip}:{node.Port} không sẵn sàng.");
                             }
                         }
@@ -107,32 +116,22 @@ namespace MasterServer
         }
 
         // Hàm xử lý kết nối TCP từ MasterServer tới NodeServer
-        private bool NotifyNodeServer(NodeInfo node, string roomId)
+        private async Task<bool> NotifyNodeServerAsync(NodeInfo node, string roomId)
         {
             try
             {
-                using (var nodeClient = new TcpClient(node.Ip, node.Port))
+                using (var nodeClient = new TcpClient())
                 {
-                    var stream = nodeClient.GetStream();
-
-                    // Gửi thông điệp báo Node chuẩn bị phòng
-                    var nodeReq = new NodeControlRequest
+                    await nodeClient.ConnectAsync(node.Ip, node.Port);
+                    using (var stream = nodeClient.GetStream())
                     {
-                        type = "PREPARE_ROOM",
-                        roomId = roomId
-                    };
-
-                    Send(stream, nodeReq);
-
-                    // Đợi Node Server phản hồi xác nhận (tùy chọn)
-                    byte[] buffer = new byte[1024];
-                    int len = stream.Read(buffer, 0, buffer.Length);
-                    if (len > 0)
-                    {
-                        string responseStr = Encoding.UTF8.GetString(buffer, 0, len);
-                        // Ở đây bạn có thể Deserialize JSON phản hồi từ Node để kiểm tra
-                        // Tạm thời cứ có phản hồi là coi như Node đã sẵn sàng
-                        return true;
+                        // Gửi thông điệp báo Node chuẩn bị phòng
+                        var nodeReq = new NodeControlRequest { type = "PREPARE_ROOM", roomId = roomId };
+                        await SendAsync(stream, nodeReq);
+                        // Đợi Node Server phản hồi xác nhận
+                        byte[] buffer = new byte[1024];
+                        int len = await stream.ReadAsync(buffer, 0, buffer.Length);
+                        return len > 0;
                     }
                 }
             }
@@ -141,7 +140,6 @@ namespace MasterServer
                 Console.WriteLine($"[MASTER SERVER] Không thể kết nối tới Node {node.Ip}:{node.Port}. Lỗi: {ex.Message}");
                 return false;
             }
-            return false;
         }
 
         private NodeInfo GetBestNode()
@@ -150,11 +148,11 @@ namespace MasterServer
             return nodes[0];
         }
 
-        private void Send(NetworkStream stream, object obj)
+        private async Task SendAsync(NetworkStream stream, object obj)
         {
             string json = JsonSerializer.Serialize(obj) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(json);
-            stream.Write(data, 0, data.Length);
+            await stream.WriteAsync(data, 0, data.Length);
         }
     }
 
@@ -162,28 +160,28 @@ namespace MasterServer
 
     public class MasterRequest
     {
-        public string type { get; set; }
-        public string roomId { get; set; }
+        public string type { get; set; } = string.Empty;
+        public string roomId { get; set; } = string.Empty;
     }
 
     public class MasterResponse
     {
         public bool success { get; set; }
-        public string nodeIp { get; set; }
+        public string? nodeIp { get; set; } 
         public int nodePort { get; set; }
-        public string roomId { get; set; }
+        public string roomId { get; set; } = string.Empty;
     }
 
     // Thêm model này để giao tiếp với Node Server
     public class NodeControlRequest
     {
-        public string type { get; set; }
-        public string roomId { get; set; }
+        public string type { get; set; } = string.Empty;
+        public string roomId { get; set; } = string.Empty;
     }
 
     public class NodeInfo
     {
-        public string Ip { get; set; }
+        public string Ip { get; set; } = string.Empty;
         public int Port { get; set; }
         public int MaxUsers { get; set; }
         public int CurrentUsers { get; set; }

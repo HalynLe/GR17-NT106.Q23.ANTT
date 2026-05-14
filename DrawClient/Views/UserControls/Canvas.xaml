@@ -716,7 +716,8 @@
              Command="{Binding Toolbar.TogglePopupCommand}"
              CommandParameter="Shape"
              Content="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
-             Focusable="False"/>
+             Focusable="False"
+             IsChecked="{Binding Toolbar.IsShapeSelected, Mode=TwoWay}"/>
                             <!-- TEXT -->
                             <RadioButton x:Name="TextButton"
              GroupName="Tools"
@@ -728,17 +729,19 @@
              Command="{Binding Toolbar.TogglePopupCommand}"
              CommandParameter="Text"
              Content="M4 7V4h16v3 M9 20h6 M12 4v16"
-             Focusable="False"/>
+             Focusable="False"
+                                         IsChecked="{Binding Toolbar.IsTextSelected, Mode=TwoWay}"/>
 
                             <!-- OCR -->
-                            <RadioButton GroupName="ORCButton"
-                         Width="40"
-                         Height="40"
-                         ToolTip="OCR Magic"
-                         Style="{StaticResource RadioToolStyle}"
-                         Command="{Binding Toolbar.TogglePopupCommand}"                      
-                         Content="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z M14 7l3 3 M5 6v4 M19 14v4 M10 2h.01 M20 22h.01 M2 2h.01"
-                         Focusable="False"/>
+                            <RadioButton GroupName="Tools"
+             Width="40"
+             Height="40"
+             ToolTip="OCR Magic"
+             Style="{StaticResource RadioToolStyle}"
+             Command="{Binding SelectToolCommand}"
+             CommandParameter="ocr"
+             Content="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z M14 7l3 3 M5 6v4 M19 14v4 M10 2h.01 M20 22h.01 M2 2h.01"
+             Focusable="False"/>
                         </StackPanel>
                     </Border>
                     <!-- PEN POPUP -->
@@ -1401,19 +1404,98 @@
 
         <!-- ================= OCR TOAST NOTIFICATION ================= -->
         <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" 
-                Margin="0,0,0,40" Padding="24,12" MinWidth="220"  
-                Background="#202124" CornerRadius="22" Panel.ZIndex="999"
-                Visibility="{Binding IsOcrToastVisible, Converter={StaticResource BoolToVis}}"
-                d:Visibility="Visible" Grid.Row="1" Width="284" Height="53">
+        Margin="0,0,0,40" Padding="24,12" MinWidth="220"  
+        Background="#202124" CornerRadius="22" Panel.ZIndex="999"
+         Grid.Row="1" Width="400" Height="53"
+        RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+
+            <Border.RenderTransform>
+                <ScaleTransform ScaleX="0" ScaleY="0" />
+            </Border.RenderTransform>
 
             <Border.Effect>
                 <DropShadowEffect BlurRadius="8" ShadowDepth="2" Opacity="0.15" Color="#3C4043"/>
             </Border.Effect>
 
-            <TextBlock Text="Draw words to detect text" 
-                               Foreground="#FFFFFF" FontSize="14" 
-                               HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"/>
+            <TextBlock Text="✨ Kéo thả chuột để khoanh vùng chữ viết tay..." 
+               Foreground="#FFFFFF" FontSize="14" 
+               HorizontalAlignment="Left" VerticalAlignment="Center" Margin="17,0,0,0">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Opacity" Value="0" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsOcrToastVisible}" Value="True">
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="Visibility">
+                                                <DiscreteObjectKeyFrame KeyTime="0:0:0" Value="{x:Static Visibility.Visible}" />
+                                            </ObjectAnimationUsingKeyFrames>
+
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.3" BeginTime="0:0:0.1" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.ExitActions>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Setter Property="Opacity" Value="0" />
+
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsOcrToastVisible}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <DataTrigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.2" />
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                                                 From="0.6" To="1" Duration="0:0:0.4">
+                                            <DoubleAnimation.EasingFunction>
+                                                <BackEase Amplitude="0.8" EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                                                 From="0.6" To="1" Duration="0:0:0.4">
+                                            <DoubleAnimation.EasingFunction>
+                                                <BackEase Amplitude="0.8" EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.EnterActions>
+
+                            <DataTrigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.2" />
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                                                 To="0.5" Duration="0:0:0.2" />
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetProperty="Visibility" BeginTime="0:0:0.2">
+                                            <DiscreteObjectKeyFrame KeyTime="0:0:0" Value="{x:Static Visibility.Collapsed}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.ExitActions>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
         </Border>
+
+
         <Popup x:Name="ProfilePopover"
        IsOpen="{Binding IsProfilePopoverVisible}"
        Placement="Bottom"

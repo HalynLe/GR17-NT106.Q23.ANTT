@@ -10,6 +10,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using DrawClient.Models;
 using System.Linq;
+using System.IO;
+using System.Windows.Media.Imaging;
+using DrawClient.Services;
 
 namespace DrawClient.Views.UserControls
 {
@@ -21,6 +24,8 @@ namespace DrawClient.Views.UserControls
         private Point _startPoint;
         private Stroke _currentTempStroke; // Stroke tạm thời để hiển thị khi đang kéo chuột
         private bool isShapeDrawing = false;
+        private System.Windows.Shapes.Rectangle _ocrSelectionRect;
+        private Point _ocrStartPoint;
 
         public Canvas()
         {
@@ -322,14 +327,6 @@ namespace DrawClient.Views.UserControls
             lastPoint = e.GetPosition(MyCanvas); // Cập nhật điểm bắt đầu ngay khi nhấn chuột
             _startPoint = lastPoint;
 
-            if (_viewModel.Toolbar.IsPencilSelected)
-            {
-                isDrawing = true;
-            }
-            else if (_viewModel.SelectedTool?.ToLower() == "shape")
-            {
-                isShapeDrawing = true;
-            }
             DependencyObject source = e.OriginalSource as DependencyObject;
 
             while (source != null)
@@ -364,27 +361,46 @@ namespace DrawClient.Views.UserControls
         {
             e.Handled = true;
         }
-
         private void Canvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_viewModel?.Toolbar == null) return;
 
+            // ocr
+            if (_viewModel.SelectedTool?.ToLowerInvariant() == "ocr")
+            {
+                MyCanvas.EditingMode = InkCanvasEditingMode.None;
+
+                if (e.LeftButton == MouseButtonState.Pressed)
+                {
+                    _ocrStartPoint = e.GetPosition(MyCanvas);
+
+                    _ocrSelectionRect = new System.Windows.Shapes.Rectangle
+                    {
+                        Stroke = Brushes.DeepSkyBlue,
+                        StrokeThickness = 1.5,
+                        StrokeDashArray = new DoubleCollection { 4, 2 },
+                        Fill = new SolidColorBrush(Color.FromArgb(25, 0, 120, 215))
+                    };
+
+                    System.Windows.Controls.Canvas.SetLeft(_ocrSelectionRect, _ocrStartPoint.X);
+                    System.Windows.Controls.Canvas.SetTop(_ocrSelectionRect, _ocrStartPoint.Y);
+                    OverlayCanvas.Children.Add(_ocrSelectionRect);
+
+                    MyCanvas.CaptureMouse();
+                    MyCanvas.Cursor = Cursors.Cross;
+                }
+                return;
+            }
+
+            // KHỞI TẠO CÁC BIẾN KIỂM TRA TRẠNG THÁI
             string penType = _viewModel.Toolbar.CurrentPenType?.ToLowerInvariant();
             string selectedTool = _viewModel.SelectedTool?.ToLowerInvariant();
             bool isEraser = _viewModel.Toolbar.IsEraserSelected || selectedTool == "eraser";
 
-            var shapes = new List<string>
-            {
-                "square",
-                "circle",
-                "triangle",
-                "line",
-                "rectangle",
-                "ellipse"
-            };
+            var shapes = new List<string> { "square", "circle", "triangle", "line", "rectangle", "ellipse" };
+            bool isShape = penType != null && shapes.Contains(penType) && selectedTool == "shape";
 
-            bool isShape = penType != null && shapes.Contains(penType);
-
+            // Thoát nếu không thuộc chế độ được phép vẽ
             if (_viewModel.CurrentEditingMode != InkCanvasEditingMode.Ink
                 && !isEraser
                 && !isShape)
@@ -395,7 +411,7 @@ namespace DrawClient.Views.UserControls
             if (e.LeftButton != MouseButtonState.Pressed)
                 return;
 
-            // 1. Nếu là Eraser
+            // XỬ LÝ KHI DÙNG CỤC TẨY
             if (isEraser)
             {
                 isDrawing = true;
@@ -406,17 +422,17 @@ namespace DrawClient.Views.UserControls
                 return;
             }
 
-            // 2. Nếu là Shape
-            if (penType != null && shapes.Contains(penType))
+            // XỬ LÝ KHI VẼ HÌNH KHỐI
+            if (isShape)
             {
-                isShapeDrawing = true;
+                isShapeDrawing = true; // Chỉ kích hoạt vẽ hình khi click hẳn vào Canvas
                 _startPoint = e.GetPosition(MyCanvas);
                 MyCanvas.CaptureMouse();
                 MyCanvas.EditingMode = InkCanvasEditingMode.None;
                 return;
             }
 
-            // 3. Nếu là vẽ bình thường (Ink)
+            // XỬ LÝ KHI VẼ BÚT BÌNH THƯỜNG
             if (_viewModel.CurrentEditingMode == InkCanvasEditingMode.Ink)
             {
                 isDrawing = true;
@@ -501,8 +517,23 @@ namespace DrawClient.Views.UserControls
                 // Cập nhật điểm cuối cho đoạn vẽ tiếp theo
                 lastPoint = currentPoint;
             }
+
+            // OCR
+            if (_viewModel.SelectedTool?.ToLowerInvariant() == "ocr" && _ocrSelectionRect != null)
+            {
+                var x = Math.Min(currentPoint.X, _ocrStartPoint.X);
+                var y = Math.Min(currentPoint.Y, _ocrStartPoint.Y);
+                var w = Math.Max(currentPoint.X, _ocrStartPoint.X) - x;
+                var h = Math.Max(currentPoint.Y, _ocrStartPoint.Y) - y;
+
+                _ocrSelectionRect.Width = w;
+                _ocrSelectionRect.Height = h;
+                System.Windows.Controls.Canvas.SetLeft(_ocrSelectionRect, x);
+                System.Windows.Controls.Canvas.SetTop(_ocrSelectionRect, y);
+                return;
+            }
         }
-        private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
+        private async void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
             // NORMAL DRAW / ERASER
             if (isDrawing)
@@ -564,6 +595,73 @@ namespace DrawClient.Views.UserControls
                 {
                     MyCanvas.ReleaseMouseCapture();
                 }
+            }
+
+            // OCR
+            if (_viewModel.SelectedTool?.ToLowerInvariant() == "ocr" && _ocrSelectionRect != null)
+            {
+                if (MyCanvas.IsMouseCaptured) MyCanvas.ReleaseMouseCapture();
+
+                // Lấy tọa độ và kích thước khung chọn
+                int x = (int)System.Windows.Controls.Canvas.GetLeft(_ocrSelectionRect);
+                int y = (int)System.Windows.Controls.Canvas.GetTop(_ocrSelectionRect);
+                int width = (int)_ocrSelectionRect.Width;
+                int height = (int)_ocrSelectionRect.Height;
+
+                OverlayCanvas.Children.Remove(_ocrSelectionRect);
+                _ocrSelectionRect = null;
+
+                if (width > 10 && height > 10) // Bỏ qua nếu khung quá nhỏ (click nhầm)
+                {
+                    try
+                    {
+                        // 1. Chụp màn hình InkCanvas
+                        RenderTargetBitmap rtb = new RenderTargetBitmap((int)MyCanvas.ActualWidth, (int)MyCanvas.ActualHeight, 96d, 96d, PixelFormats.Default);
+                        rtb.Render(MyCanvas);
+
+                        // 2. Cắt đúng vùng người dùng chọn
+                        CroppedBitmap crop = new CroppedBitmap(rtb, new Int32Rect(x, y, width, height));
+
+                        // 3. Chuyển thành Base64
+                        string base64String = "";
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            BitmapEncoder encoder = new PngBitmapEncoder();
+                            encoder.Frames.Add(BitmapFrame.Create(crop));
+                            encoder.Save(ms);
+                            byte[] imageBytes = ms.ToArray();
+                            base64String = Convert.ToBase64String(imageBytes);
+                        }
+
+                        // Đổi trỏ chuột thành Loading để user chờ
+                        Mouse.OverrideCursor = Cursors.Wait;
+
+                        // 4. Gọi API
+                        string detectedText = await OcrService.RecognizeTextAsync(base64String);
+
+                        Mouse.OverrideCursor = null;
+
+                        // 5. In chữ ra màn hình và đồng bộ Socket
+                        if (!string.IsNullOrEmpty(detectedText))
+                        {
+                            // Vẽ TextBlock lên màn hình và gửi cho client khác
+                            _viewModel.SendText(detectedText, new Point(x, y));
+
+                            // Xóa các nét chữ viết tay cũ bên dưới vùng chọn
+                            MyCanvas.Strokes.Erase(new Rect(x, y, width, height)); 
+                        }
+                        else
+                        {
+                            MessageBox.Show("Không tìm thấy chữ nào trong vùng vừa chọn!", "OCR Magic", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Mouse.OverrideCursor = null;
+                        MessageBox.Show("Lỗi cắt ảnh: " + ex.Message);
+                    }
+                }
+                return;
             }
         }
 

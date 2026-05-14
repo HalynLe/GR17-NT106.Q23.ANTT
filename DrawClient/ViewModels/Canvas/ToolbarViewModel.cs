@@ -192,6 +192,28 @@ namespace DrawClient.ViewModels.Canvas
                 UpdateCurrentSize();
             }
         }
+
+        private bool _isShapeSelected;
+        public bool IsShapeSelected
+        {
+            get => _isShapeSelected;
+            set
+            {
+                _isShapeSelected = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _isTextSelected;
+        public bool IsTextSelected
+        {
+            get => _isTextSelected;
+            set
+            {
+                _isTextSelected = value;
+                OnPropertyChanged();
+            }
+        }
         // ================= SIZE =================
 
         private double _pencilSize = 2;

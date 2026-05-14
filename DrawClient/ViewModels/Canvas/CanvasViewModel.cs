@@ -11,6 +11,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Ink;
 using System.Windows.Input;
+using System.Threading.Tasks;
 
 namespace DrawClient.ViewModels
 {
@@ -112,8 +113,16 @@ namespace DrawClient.ViewModels
         }
 
         private string _previousColor = "#000000";
+        
+        private bool _isOcrToastVisible = false;
 
-                private bool _canUndo = false;
+        public bool IsOcrToastVisible
+        {
+            get => _isOcrToastVisible;
+            set { _isOcrToastVisible = value; OnPropertyChanged(); }
+        }
+
+        private bool _canUndo = false;
                 public bool CanUndo
                 {
                     get => _canUndo;
@@ -133,6 +142,7 @@ namespace DrawClient.ViewModels
                     get => _historyInfo;
                     set { _historyInfo = value; OnPropertyChanged(); }
                 }
+
         #endregion
 
         #region Commands
@@ -358,6 +368,7 @@ namespace DrawClient.ViewModels
 
                 return;
             }
+            
 
             if (SelectedTool == tool)
             {
@@ -368,13 +379,22 @@ namespace DrawClient.ViewModels
                 {
                     CurrentEditingMode = InkCanvasEditingMode.Select;
                 }
-
-                return;
+                if (tool == "ocr")
+                {
+                    ShowOcrToastTemporarily();
+                }
+                return; 
             }
 
             SelectedTool = tool;
             IsColorMenuOpen = false;
             IsPenMenuOpen = false; ;
+
+            if (tool.ToLowerInvariant() != "ocr")
+            {
+                IsOcrToastVisible = false;
+                _ocrToastToken++; 
+            }
 
             switch (tool)
             {
@@ -387,6 +407,8 @@ namespace DrawClient.ViewModels
                     CurrentEditingMode = InkCanvasEditingMode.Ink;
                     Toolbar.IsPencilSelected = true;   
                     Toolbar.IsEraserSelected = false;
+                    Toolbar.IsShapeSelected = false;
+                    Toolbar.IsTextSelected = false;
                     Toolbar.CurrentColor = CurrentColor;
                     Toolbar.CurrentThickness = Toolbar.PencilSize;
                     if (string.IsNullOrEmpty(Toolbar.CurrentPenType) || IsShapeTool(Toolbar.CurrentPenType))
@@ -399,6 +421,8 @@ namespace DrawClient.ViewModels
                     CurrentEditingMode = InkCanvasEditingMode.EraseByPoint;
                     Toolbar.IsEraserSelected = true;   
                     Toolbar.IsPencilSelected = false;
+                    Toolbar.IsShapeSelected = false;
+                    Toolbar.IsTextSelected = false;
                     Toolbar.CurrentPenType = "eraser";
                     Toolbar.CurrentThickness = Toolbar.EraserSize;
                     break;
@@ -406,6 +430,8 @@ namespace DrawClient.ViewModels
                     CurrentEditingMode = InkCanvasEditingMode.None;
                     Toolbar.IsPencilSelected = false;
                     Toolbar.IsEraserSelected = false;
+                    Toolbar.IsShapeSelected = true;
+                    Toolbar.IsTextSelected = false;
                     Toolbar.CurrentThickness = Toolbar.CurrentShapeThickness;
 
                     var shapes = new System.Collections.Generic.List<string> { "square", "circle", "triangle", "line", "rectangle", "ellipse" };
@@ -414,12 +440,46 @@ namespace DrawClient.ViewModels
                         Toolbar.CurrentPenType = "rectangle";
                     }
                     break;
+                case "ocr":
+                    CurrentEditingMode = InkCanvasEditingMode.None;
+
+                    if (Toolbar != null)
+                    {
+                        Toolbar.IsPencilSelected = false;
+                        Toolbar.IsShapeSelected = false;
+                        Toolbar.IsEraserSelected = false;
+                        Toolbar.IsTextSelected = false;
+                    }
+
+                    ShowOcrToastTemporarily();
+                    break;
             }
         }
         private bool IsShapeTool(string tool)
         {
             var shapes = new System.Collections.Generic.List<string> { "square", "rectangle", "circle", "ellipse", "triangle", "line" };
             return shapes.Contains(tool?.ToLowerInvariant());
+        }
+
+        private int _ocrToastToken = 0;
+
+        private void ShowOcrToastTemporarily()
+        {
+            int currentToken = ++_ocrToastToken;
+
+            IsOcrToastVisible = false;
+
+            System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                if (currentToken != _ocrToastToken) return;
+                IsOcrToastVisible = true;
+                await Task.Delay(1500);
+
+                if (currentToken == _ocrToastToken)
+                {
+                    IsOcrToastVisible = false;
+                }
+            }, System.Windows.Threading.DispatcherPriority.ContextIdle);
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
