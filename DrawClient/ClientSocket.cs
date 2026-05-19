@@ -276,6 +276,7 @@ namespace DrawClient
                         type == "TEXT" ||
                         type == "CLEAR" ||
                         type == "CHAT" ||
+                        type == "DELETE_TEXT" ||
                         type == "LEAVE"
                     )
                     {

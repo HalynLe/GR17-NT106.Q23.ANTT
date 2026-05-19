@@ -15,7 +15,7 @@ namespace DrawServer
     public class ServerSocket
     {
         private string connectionString =
-            "server=localhost;database=online_Drawing_DB;user=root;password=182806";
+            "server=localhost;database=online_Drawing_DB;user=root;password=";
 
         private TcpListener server;
 
@@ -195,6 +195,7 @@ namespace DrawServer
                      msg.type == "SHAPE" ||
                      msg.type == "TEXT" ||
                      msg.type == "CLEAR" ||
+                     msg.type == "DELETE_TEXT" ||
                      msg.type == "CHAT"
                 )
                 {
