@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -10,8 +8,7 @@ namespace DrawClient.Services
 {
     class OcrService
     {
-        private const string API_KEY = ""; // gắn sau
-        private const string API_URL = "https://vision.googleapis.com/v1/images:annotate?key=" + API_KEY;
+        private const string MY_SERVER_OCR_URL = "http://localhost:5274/api/ocr/recognize";
 
         public static async Task<string> RecognizeTextAsync(string base64Image)
         {
@@ -19,56 +16,35 @@ namespace DrawClient.Services
             {
                 using (var client = new HttpClient())
                 {
-                    var requestBody = new
-                    {
-                        requests = new[]
-                        {
-                            new
-                            {
-                                image = new { content = base64Image },
-                                features = new[]
-                                {
-                                    new { type = "DOCUMENT_TEXT_DETECTION" }
-                                }
-                            }
-                        }
-                    };
-
+                    var requestBody = new { Base64Image = base64Image };
                     var jsonRequest = JsonSerializer.Serialize(requestBody);
                     var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-                    var response = await client.PostAsync(API_URL, content);
-                    var jsonResponse = await response.Content.ReadAsStringAsync();
+                    var response = await client.PostAsync(MY_SERVER_OCR_URL, content);
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        Console.WriteLine("Lỗi API OCR: " + jsonResponse);
+                        string error = await response.Content.ReadAsStringAsync();
+                        Console.WriteLine("Lỗi từ Master Server: " + error);
                         return null;
                     }
 
+                    var jsonResponse = await response.Content.ReadAsStringAsync();
+
                     using (JsonDocument doc = JsonDocument.Parse(jsonResponse))
                     {
-                        var root = doc.RootElement;
-                        var responses = root.GetProperty("responses");
-
-                        if (responses.GetArrayLength() > 0)
+                        if (doc.RootElement.TryGetProperty("text", out var textElement))
                         {
-                            var firstResponse = responses[0];
-                            if (firstResponse.TryGetProperty("fullTextAnnotation", out var fullTextAnnotation))
-                            {
-                                if (fullTextAnnotation.TryGetProperty("text", out var textElement))
-                                {
-                                    return textElement.GetString()?.Trim();
-                                }
-                            }
+                            return textElement.GetString();
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Lỗi khi gọi OCR Service: " + ex.Message);
+                Console.WriteLine("Lỗi kết nối đến Master Server: " + ex.Message);
             }
+
             return null;
         }
     }

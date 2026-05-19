@@ -28,6 +28,7 @@ namespace DrawClient.ViewModels
         public Action<Point, Point, string, double> OnLineReceived;
         public Action<DrawMessage> OnShapeReceived;
         public Action<DrawMessage> OnTextReceived;
+        public Action<DrawMessage> OnDeleteTextReceived;
         public Action OnCanvasCleared;
         public Action GoBackToLobby;
         public UndoRedoManager UndoRedoManager { get; private set; } = new UndoRedoManager();
@@ -811,6 +812,10 @@ namespace DrawClient.ViewModels
                     InvokeUI(() => OnTextReceived?.Invoke(draw));
                     break;
 
+                case "DELETE_TEXT":
+                    InvokeUI(() => OnDeleteTextReceived?.Invoke(draw));
+                    break;
+
                 case "CLEAR":
                     InvokeUI(() => OnCanvasCleared?.Invoke());
                     break;
@@ -927,30 +932,38 @@ namespace DrawClient.ViewModels
 
             ClientSocket.Instance.Send(msg);
         }
-        public void SendText(
-    string text,
-    Point position)
+        public void SendText(string text, Point p, double width, double height, double fontSize = 14)
         {
-            ClientSocket.Instance.Send(new DrawMessage
+            var msg = new DrawMessage
             {
                 type = "TEXT",
-
-                roomId = RoomId,
-
+                roomId = this.RoomId,
                 userId = ClientSocket.Instance.CurrentUserId,
-
-                username = ClientSocket.Instance.CurrentUsername,
-
                 text = text,
+                x1 = p.X,
+                y1 = p.Y,
+                x2 = width,
+                y2 = height,
+                fontSize = fontSize,
+                color = Toolbar.CurrentColor
+            };
 
-                x1 = position.X,
-                y1 = position.Y,
-
-                color = Toolbar.CurrentColor,
-
-                fontSize = Toolbar.CurrentThickness * 5
-            });
+            ClientSocket.Instance.Send(msg);
         }
+        public void SendDeleteText(double x, double y, string textContent)
+        {
+            var msg = new DrawMessage
+            {
+                type = "DELETE_TEXT",
+                roomId = this.RoomId,
+                userId = ClientSocket.Instance.CurrentUserId,
+                x1 = x,
+                y1 = y,
+                text = textContent
+            };
+            ClientSocket.Instance.Send(msg);
+        }
+
         private void ExecuteClearCanvas(object obj)
         {
             string safeUsername =

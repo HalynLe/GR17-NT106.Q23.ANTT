@@ -39,6 +39,7 @@ namespace DrawClient.Views.UserControls
             this.PreviewMouseDown += UserControl_PreviewMouseDown;
             //laser
             this.inkCanvas.MouseMove += InkCanvas_MouseMove;
+
             _laserTimer = new DispatcherTimer();
             _laserTimer.Interval = TimeSpan.FromSeconds(3);
 
@@ -72,6 +73,7 @@ namespace DrawClient.Views.UserControls
                 _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
                 _viewModel.OnShapeReceived -= DrawShape;
                 _viewModel.OnTextReceived -= DrawText;
+                _viewModel.OnDeleteTextReceived -= DeleteTextFromNetwork;
                 // FIX SOCKET MEMORY LEAK
                 _viewModel.Cleanup();
             }
@@ -97,6 +99,7 @@ namespace DrawClient.Views.UserControls
                 oldVm.PropertyChanged -= ViewModel_PropertyChanged;
                 oldVm.OnShapeReceived -= DrawShape;
                 oldVm.OnTextReceived -= DrawText;
+                oldVm.OnDeleteTextReceived -= DeleteTextFromNetwork;
 
                 if (oldVm.Toolbar != null)
                 {
@@ -116,6 +119,7 @@ namespace DrawClient.Views.UserControls
                 _viewModel.PropertyChanged += ViewModel_PropertyChanged;
                 _viewModel.OnShapeReceived += DrawShape;
                 _viewModel.OnTextReceived += DrawText;
+                _viewModel.OnDeleteTextReceived += DeleteTextFromNetwork;
                 _viewModel.ChatMessages.CollectionChanged += ChatMessages_CollectionChanged;
 
                 if (_viewModel.Toolbar != null)
@@ -361,15 +365,20 @@ namespace DrawClient.Views.UserControls
 
                 source = VisualTreeHelper.GetParent(source);
             }
+            if (_viewModel != null && _viewModel.Toolbar.IsEraserSelected)
+            {
+                EraseTextAtPoint(e.GetPosition(MyCanvas));
+            }
 
             _viewModel.IsProfilePopoverVisible = false;
         }
-
+  
         private void ClearLocalCanvas()
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
                 MyCanvas.Strokes.Clear();
+                MyCanvas.Children.Clear();
             });
         }
 
@@ -510,11 +519,11 @@ namespace DrawClient.Views.UserControls
             // 2. CHẾ ĐỘ TẨY (ERASER)
             if (isEraser)
             {
-                // Xóa trên máy cục bộ
                 MyCanvas.Strokes.Erase(
                     new Point[] { lastPoint, currentPoint },
                     new EllipseStylusShape(_viewModel.Toolbar.EraserSize, _viewModel.Toolbar.EraserSize));
 
+<<<<<<< HEAD
                 // FIX: Gửi lệnh ERASE lên server (không phải DRAW)
                 var eraseMsg = new DrawMessage
                 {
@@ -531,6 +540,13 @@ namespace DrawClient.Views.UserControls
                 };
                 ClientSocket.Instance.Send(eraseMsg);
                 
+=======
+                // Gọi hàm quét chữ khi rê chuột
+                EraseTextAtPoint(currentPoint);
+
+                DrawNetworkLine(lastPoint, currentPoint, _viewModel.Toolbar.CurrentColor, _viewModel.Toolbar.CurrentThickness);
+                _viewModel.SendDrawData(lastPoint, currentPoint);
+>>>>>>> fab2d1b366c8423b7efe0aaf700a8f4125580c9d
                 lastPoint = currentPoint;
                 UpdateEraserCursor(currentPoint);
                 return;
@@ -643,9 +659,18 @@ namespace DrawClient.Views.UserControls
                 {
                     try
                     {
-                        // 1. Chụp màn hình InkCanvas
+                        // 1. Chụp màn hình InkCanvas KÈM NỀN TRẮNG
                         RenderTargetBitmap rtb = new RenderTargetBitmap((int)MyCanvas.ActualWidth, (int)MyCanvas.ActualHeight, 96d, 96d, PixelFormats.Default);
-                        rtb.Render(MyCanvas);
+
+                        DrawingVisual dv = new DrawingVisual();
+                        using (DrawingContext dc = dv.RenderOpen())
+                        {
+                            // Đổ một lớp nền màu trắng tinh
+                            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, MyCanvas.ActualWidth, MyCanvas.ActualHeight));
+                            // Đặt nét vẽ lên trên lớp nền trắng đó
+                            dc.DrawRectangle(new VisualBrush(MyCanvas), null, new Rect(0, 0, MyCanvas.ActualWidth, MyCanvas.ActualHeight));
+                        }
+                        rtb.Render(dv);
 
                         // 2. Cắt đúng vùng người dùng chọn
                         CroppedBitmap crop = new CroppedBitmap(rtb, new Int32Rect(x, y, width, height));
@@ -672,10 +697,11 @@ namespace DrawClient.Views.UserControls
                         // 5. In chữ ra màn hình và đồng bộ Socket
                         if (!string.IsNullOrEmpty(detectedText))
                         {
-                            // Vẽ TextBlock lên màn hình và gửi cho client khác
-                            _viewModel.SendText(detectedText, new Point(x, y));
+                            double calculatedFontSize = height * 0.75;
 
-                            // Xóa các nét chữ viết tay cũ bên dưới vùng chọn
+                            _viewModel.SendText(detectedText, new Point(x, y), width, height, calculatedFontSize);
+
+                            // Xóa nét vẽ cục bộ tại máy người quét
                             MyCanvas.Strokes.Erase(new Rect(x, y, width, height));
                         }
                         else
@@ -687,6 +713,10 @@ namespace DrawClient.Views.UserControls
                     {
                         Mouse.OverrideCursor = null;
                         MessageBox.Show("Lỗi cắt ảnh: " + ex.Message);
+                    }
+                    finally
+                    {
+                        Mouse.OverrideCursor = null;
                     }
                 }
                 return;
@@ -935,17 +965,78 @@ namespace DrawClient.Views.UserControls
                 {
                     Text = msg.text,
                     FontSize = msg.fontSize,
-                    Foreground = new SolidColorBrush(
-                        (Color)ColorConverter.ConvertFromString(msg.color))
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(msg.color)),
+
+                    Background = Brushes.Transparent
                 };
 
                 InkCanvas.SetLeft(tb, msg.x1);
                 InkCanvas.SetTop(tb, msg.y1);
 
                 MyCanvas.Children.Add(tb);
+
+                if (msg.x2 > 0 && msg.y2 > 0)
+                {
+                    MyCanvas.Strokes.Erase(new Rect(msg.x1, msg.y1, msg.x2, msg.y2));
+                }
             });
         }
 
+        private void DeleteTextFromNetwork(DrawMessage msg)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var elementToRemove = MyCanvas.Children.OfType<TextBlock>()
+                    .FirstOrDefault(tb =>
+                    {
+                        double tbX = InkCanvas.GetLeft(tb);
+                        double tbY = InkCanvas.GetTop(tb);
+                        if (double.IsNaN(tbX)) tbX = 0;
+                        if (double.IsNaN(tbY)) tbY = 0;
+
+                        bool isMatchPos = Math.Abs(tbX - msg.x1) < 5 && Math.Abs(tbY - msg.y1) < 5;
+
+                        string localText = tb.Text != null ? tb.Text.Replace("\r", "").Replace("\n", "").Trim() : "";
+                        string networkText = msg.text != null ? msg.text.Replace("\r", "").Replace("\n", "").Trim() : "";
+
+                        bool isMatchText = string.Equals(localText, networkText, StringComparison.OrdinalIgnoreCase)
+                                           || localText.Contains(networkText)
+                                           || networkText.Contains(localText);
+
+                        return isMatchPos && isMatchText;
+                    });
+
+                if (elementToRemove != null)
+                {
+                    MyCanvas.Children.Remove(elementToRemove);
+                }
+            });
+        }
+        private void EraseTextAtPoint(Point currentPoint)
+        {
+            var textBlocks = MyCanvas.Children.OfType<TextBlock>().ToList();
+            foreach (var tb in textBlocks)
+            {
+                double tbX = InkCanvas.GetLeft(tb);
+                double tbY = InkCanvas.GetTop(tb);
+
+                if (double.IsNaN(tbX)) tbX = 0;
+                if (double.IsNaN(tbY)) tbY = 0;
+
+                double width = tb.ActualWidth > 0 ? tb.ActualWidth : tb.DesiredSize.Width;
+                double height = tb.ActualHeight > 0 ? tb.ActualHeight : tb.DesiredSize.Height;
+
+                Rect bounds = new Rect(tbX, tbY, width, height);
+                double offset = _viewModel.Toolbar.EraserSize / 2;
+                bounds.Inflate(offset, offset);
+
+                if (bounds.Contains(currentPoint))
+                {
+                    MyCanvas.Children.Remove(tb);
+                    _viewModel.SendDeleteText(tbX, tbY, tb.Text);
+                }
+            }
+        }
         // Hàm mở bảng màu khi click dấu (+)
         private void OpenColorPicker_Click(object sender, RoutedEventArgs e)
         {

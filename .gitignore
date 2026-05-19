@@ -13,3 +13,9 @@ Release/
 
 # Logs
 *.log
+
+# setting
+/MasterServer/appsettings.json
+/MasterServer/appsettings.Development.json
+
+!/MasterServer/appsettings.Example.json

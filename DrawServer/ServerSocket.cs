@@ -231,12 +231,22 @@ namespace DrawServer
                     SendChatHistoryToClient(client, msg.roomId);
                 }
                 else if (
+<<<<<<< HEAD
                     msg.type == "DRAW" ||
                     msg.type == "ERASE" ||
                     msg.type == "SHAPE" ||
                     msg.type == "TEXT" ||
                     msg.type == "CLEAR" ||
                     msg.type == "CHAT"
+=======
+                     msg.type == "DRAW" ||
+                     msg.type == "ERASE" ||
+                     msg.type == "SHAPE" ||
+                     msg.type == "TEXT" ||
+                     msg.type == "CLEAR" ||
+                     msg.type == "DELETE_TEXT" ||
+                     msg.type == "CHAT"
+>>>>>>> fab2d1b366c8423b7efe0aaf700a8f4125580c9d
                 )
                 {
                     if (clientMetadata.TryGetValue(client, out var metadata))
