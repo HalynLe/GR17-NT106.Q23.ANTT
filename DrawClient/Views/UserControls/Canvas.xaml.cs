@@ -515,11 +515,23 @@ namespace DrawClient.Views.UserControls
                     new Point[] { lastPoint, currentPoint },
                     new EllipseStylusShape(_viewModel.Toolbar.EraserSize, _viewModel.Toolbar.EraserSize));
 
-                // Gửi lệnh xóa cho người khác
-                DrawNetworkLine(lastPoint, currentPoint, _viewModel.Toolbar.CurrentColor, _viewModel.Toolbar.CurrentThickness);
-                _viewModel.SendDrawData(lastPoint, currentPoint);
+                // FIX: Gửi lệnh ERASE lên server (không phải DRAW)
+                var eraseMsg = new DrawMessage
+                {
+                    type = "ERASE",
+                    roomId = _viewModel.RoomId,
+                    userId = ClientSocket.Instance.CurrentUserId,
+                    username = ClientSocket.Instance.CurrentUsername,
+                    x1 = lastPoint.X,
+                    y1 = lastPoint.Y,
+                    x2 = currentPoint.X,
+                    y2 = currentPoint.Y,
+                    thickness = _viewModel.Toolbar.EraserSize,
+                    color = "#ERASE"
+                };
+                ClientSocket.Instance.Send(eraseMsg);
+                
                 lastPoint = currentPoint;
-
                 UpdateEraserCursor(currentPoint);
                 return;
             }

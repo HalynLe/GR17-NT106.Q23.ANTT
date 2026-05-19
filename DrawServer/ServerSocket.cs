@@ -15,7 +15,7 @@ namespace DrawServer
     public class ServerSocket
     {
         private string connectionString =
-            "server=localhost;database=online_Drawing_DB;user=root;password=182806";
+            "server=localhost;database=online_Drawing_DB;user=root;password=";
 
         private TcpListener server;
 
@@ -26,7 +26,7 @@ namespace DrawServer
         // Quản lý thông tin User trên mỗi Connection (UserId, RoomId, Username)
         private ConcurrentDictionary<TcpClient, (int UserId, string RoomId, string Username)> clientMetadata
             = new ConcurrentDictionary<TcpClient, (int UserId, string RoomId, string Username)>();
-
+        private bool _isRunning = true;
         private static readonly HttpClient _httpClient = new HttpClient();
         private const string MasterApiUrl = "http://localhost:5274/api/room/update-status";
 
@@ -57,6 +57,23 @@ namespace DrawServer
             }
         }
 
+       private async Task HeartbeatCheckAsync(TcpClient client)
+        {
+            while (_isRunning && client.Connected)
+            {
+                await Task.Delay(30000);
+                try
+                {
+                    if (!client.Connected) break;
+                    var pingMsg = new DrawMessage { type = "PING" };
+                    string json = JsonSerializer.Serialize(pingMsg) + "\n";
+                    byte[] data = Encoding.UTF8.GetBytes(json);
+                    await client.GetStream().WriteAsync(data, 0, data.Length);
+                }
+                catch { break; }
+            }
+        }
+
         // Trong ServerSocket.cs - Phương thức HandleClient
         private async Task HandleClientAsync(TcpClient client)
         {
@@ -64,6 +81,7 @@ namespace DrawServer
             {
                 byte[] bytes = new byte[8192]; // Buffer lớn hơn một chút
                 StringBuilder messageBuffer = new StringBuilder();
+                 _ = HeartbeatCheckAsync(client);
 
                 try
                 {
@@ -101,15 +119,25 @@ namespace DrawServer
                     string targetRoomId = null;
                     int targetUserId = 0;
                     string targetUsername = null;
-
-                    // 1. Lấy thông tin user và room từ metadata trước khi xóa
                     if (clientMetadata.TryRemove(client, out var metadata))
                     {
                         targetRoomId = metadata.RoomId;
                         targetUserId = metadata.UserId;
                         targetUsername = metadata.Username;
+                        
+                        // Cập nhật is_online = 0 trong DB
+                        using (var conn = new MySqlConnection(connectionString))
+                        {
+                            conn.Open();
+                            string updateSql = "UPDATE RoomMembers SET is_online = 0 WHERE user_id = @uid AND room_id = @rid";
+                            using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
+                            {
+                                cmd.Parameters.AddWithValue("@uid", targetUserId);
+                                cmd.Parameters.AddWithValue("@rid", int.Parse(targetRoomId));
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
 
-                        // Cập nhật DB qua Master API (Code cũ của bạn)
                         _ = NotifyMasterStatusChanged(targetUserId, int.Parse(targetRoomId), false);
                     }
 
@@ -177,7 +205,20 @@ namespace DrawServer
                     // Lưu lại Metadata để xử lý khi thoát
                     // Lưu ý: Client cần gửi kèm userId trong gói tin JOIN
                     clientMetadata[client] = (msg.userId, msg.roomId, msg.username);
-
+                   using (var conn = new MySqlConnection(connectionString))
+                    {
+                        conn.Open();
+                        string updateSql = @"
+                            INSERT INTO RoomMembers (user_id, room_id, is_online, role) 
+                            VALUES (@uid, @rid, 1, 'MEMBER')
+                            ON DUPLICATE KEY UPDATE is_online = 1";
+                        using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
+                        {
+                            cmd.Parameters.AddWithValue("@uid", msg.userId);
+                            cmd.Parameters.AddWithValue("@rid", int.Parse(msg.roomId));
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
                     // Cập nhật Online trong DB
                     _ = NotifyMasterStatusChanged(msg.userId, int.Parse(msg.roomId), true);
 
@@ -190,12 +231,12 @@ namespace DrawServer
                     SendChatHistoryToClient(client, msg.roomId);
                 }
                 else if (
-                     msg.type == "DRAW" ||
-                     msg.type == "ERASE" ||
-                     msg.type == "SHAPE" ||
-                     msg.type == "TEXT" ||
-                     msg.type == "CLEAR" ||
-                     msg.type == "CHAT"
+                    msg.type == "DRAW" ||
+                    msg.type == "ERASE" ||
+                    msg.type == "SHAPE" ||
+                    msg.type == "TEXT" ||
+                    msg.type == "CLEAR" ||
+                    msg.type == "CHAT"
                 )
                 {
                     if (clientMetadata.TryGetValue(client, out var metadata))
@@ -221,6 +262,39 @@ namespace DrawServer
                     }
 
                 }
+
+                else if (msg.type == "DRAW_BATCH" && msg.actions != null && msg.actions.Count > 0)
+                {
+                    Console.WriteLine($"[BATCH] Received batch of {msg.actions.Count} actions");
+                    foreach (var action in msg.actions)
+                    {
+                        // Gán lại roomId và userId cho từng action
+                        action.roomId = msg.roomId;
+                        if (clientMetadata.TryGetValue(client, out var meta))
+                            action.userId = meta.UserId;
+                        
+                        string actionJson = JsonSerializer.Serialize(action);
+                        BroadcastToRoom(msg.roomId, actionJson, client);
+                        SaveDrawAction(action);
+                    }
+                }
+
+                else if (msg.type == "UNDO")
+                {
+                    Console.WriteLine("[SERVER] UNDO command received from user " + msg.userId);
+                    
+                    // Broadcast UNDO command để tất cả client cùng undo
+                    string undoJson = JsonSerializer.Serialize(msg);
+                    BroadcastToRoom(msg.roomId, undoJson, client);
+                }
+                else if (msg.type == "REDO")
+                {
+                    Console.WriteLine("[SERVER] REDO command received from user " + msg.userId);
+                    
+                    // Broadcast REDO command để tất cả client cùng redo
+                    string redoJson = JsonSerializer.Serialize(msg);
+                    BroadcastToRoom(msg.roomId, redoJson, client);
+                }
                 else if (msg.type == "LEAVE")
                 {
                     // Xử lý cập nhật DB khi nhận lệnh LEAVE chủ động
@@ -229,6 +303,17 @@ namespace DrawServer
                         _ = NotifyMasterStatusChanged(metadata.UserId, int.Parse(metadata.RoomId), false);
                     }
                     RemoveClientFromRoom(msg.roomId, client);
+                    using (var conn = new MySqlConnection(connectionString))
+                    {
+                        conn.Open();
+                        string updateSql = "UPDATE RoomMembers SET is_online = 0 WHERE user_id = @uid AND room_id = @rid";
+                        using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
+                        {
+                            cmd.Parameters.AddWithValue("@uid", msg.userId);
+                            cmd.Parameters.AddWithValue("@rid", int.Parse(msg.roomId));
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
                     // Gửi thông tin LEAVE này cho tất cả những người còn lại trong phòng
                     string leaveJson = JsonSerializer.Serialize(msg);
                     BroadcastToRoom(msg.roomId, leaveJson, client);
@@ -254,6 +339,7 @@ namespace DrawServer
             }
         }
 
+        // DrawServer/ServerSocket.cs - Cải tiến BroadcastToRoom
         private void BroadcastToRoom(string roomId, string rawJson, TcpClient sender)
         {
             if (!rooms.TryGetValue(roomId, out var clients)) return;
@@ -263,6 +349,9 @@ namespace DrawServer
 
             byte[] data = Encoding.UTF8.GetBytes(rawJson);
 
+            // Gửi parallel để không block thread
+            var tasks = new List<Task>();
+            
             foreach (var client in clients.Keys)
             {
                 if (!client.Connected)
@@ -271,16 +360,24 @@ namespace DrawServer
                     continue;
                 }
 
-                try
+                // Gửi không chờ (fire and forget)
+                tasks.Add(Task.Run(() =>
                 {
-                    var stream = client.GetStream();
-                    stream.Write(data, 0, data.Length);
-                }
-                catch
-                {
-                    clients.TryRemove(client, out _);
-                }
+                    try
+                    {
+                        var stream = client.GetStream();
+                        stream.Write(data, 0, data.Length);
+                        stream.Flush();
+                    }
+                    catch
+                    {
+                        clients.TryRemove(client, out _);
+                    }
+                }));
             }
+            
+            // Không chờ tất cả xong, tiếp tục xử lý client khác
+            Task.WaitAll(tasks.ToArray(), TimeSpan.FromMilliseconds(100));
         }
         private void RemoveClientFromRoom(string roomId, TcpClient client)
         {

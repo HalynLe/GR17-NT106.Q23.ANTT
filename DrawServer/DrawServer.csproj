@@ -114,6 +114,7 @@
   <ItemGroup>
     <Compile Include="DrawMessage.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="RoomCleanupService.cs" />
     <Compile Include="ServerSocket.cs" />
   </ItemGroup>
   <ItemGroup>

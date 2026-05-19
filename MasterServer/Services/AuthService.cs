@@ -21,9 +21,9 @@ public class AuthService
         using var conn = new MySqlConnection(_connectionString);
 
         var existing = conn.QueryFirstOrDefault<User>(
-            "SELECT * FROM Users WHERE username = @username",
-            new { req.username });
-
+    "SELECT * FROM users WHERE username = @username",
+    new { req.username }
+);
         if (existing != null) return false;
 
         string hash = BCrypt.Net.BCrypt.HashPassword(req.password);

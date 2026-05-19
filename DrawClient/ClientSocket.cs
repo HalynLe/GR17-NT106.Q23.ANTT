@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Windows.Interop;
+using System.IO;
 
 namespace DrawClient
 {
@@ -177,6 +178,8 @@ namespace DrawClient
         private void ReceiveLoop()
         {
             byte[] receiveBuffer = new byte[4096];
+            int consecutiveErrors = 0;
+            const int maxRetries = 3;
 
             try
             {
@@ -185,8 +188,13 @@ namespace DrawClient
                     if (stream == null || !client.Connected)
                         break;
 
+                    // Set timeout để phát hiện kết nối mất
+                    stream.ReadTimeout = 35000; // 35 giây
+
                     int len = stream.Read(receiveBuffer, 0, receiveBuffer.Length);
                     if (len <= 0) break;
+
+                    consecutiveErrors = 0; // Reset khi nhận dữ liệu thành công
 
                     lock (_bufferLock)
                     {
@@ -201,13 +209,23 @@ namespace DrawClient
                             string msg = content.Substring(0, index);
                             buffer.Remove(0, index + 1);
 
-                            // Đẩy dữ liệu ra UI an toàn
                             if (!string.IsNullOrWhiteSpace(msg))
                             {
                                 HandleMessage(msg);
                             }
                         }
                     }
+                }
+            }
+            catch (IOException ex) when (ex.InnerException is SocketException)
+            {
+                Console.WriteLine($"Network disconnected: {ex.Message}");
+                // Thử reconnect tự động
+                if (consecutiveErrors < maxRetries)
+                {
+                    consecutiveErrors++;
+                    // Gọi event để UI biết cần reconnect
+                    OnConnectionLost?.Invoke(new ConnectionLostArgs { CanRetry = true });
                 }
             }
             catch (Exception ex)
@@ -219,6 +237,9 @@ namespace DrawClient
                 Disconnect();
             }
         }
+
+// Event để UI handle
+        public event Action<ConnectionLostArgs> OnConnectionLost;
         #endregion
 
         #region SEND
@@ -310,5 +331,9 @@ namespace DrawClient
             client = null;
             receiveThread = null;
         }
+    }
+    public class ConnectionLostArgs : EventArgs
+    {
+        public bool CanRetry { get; set; }
     }
 }
