@@ -6,23 +6,20 @@ namespace DrawServer
     {
         static void Main(string[] args)
         {
-            // Bạn có thể đổi Port ở đây nếu muốn
-            int port = 6001;
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.Title = "Node Server - Drawing App";
+            int port = 6001; // Port chạy Socket của Node vẽ này
 
             string connectionString = "server=127.0.0.1;database=online_Drawing_DB;user=root;password=";
             var cleanupService = new RoomCleanupService(connectionString);
-            cleanupService.StartCleanupTimer();
-            Console.WriteLine("[CLEANUP SERVICE] Started, will delete rooms inactive > 4 weeks");
 
             Console.Title = "Node Server - Drawing App";
             Console.WriteLine("=======================================");
-            Console.WriteLine($"[NODE SERVER] Dang khoi tao tai Port: {port}");
+            Console.WriteLine($"[NODE SERVER] Đang khởi tại Port: {port}");
 
             ServerSocket server = new ServerSocket();
             server.Start(port);
 
-            Console.WriteLine("=======================================");
-            Console.WriteLine("Server dang chay. Bam phim bat ky de dong...");
             Console.ReadKey();
         }
     }

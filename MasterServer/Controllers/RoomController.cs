@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 [Authorize]
 [ApiController]
@@ -10,10 +11,12 @@ using System.Collections.Generic;
 public class RoomController : ControllerBase
 {
     private readonly RoomService _roomService;
+    private readonly NodeService _nodeService;
 
-    public RoomController(RoomService roomService)
+    public RoomController(RoomService roomService, NodeService nodeService)
     {
         _roomService = roomService;
+        _nodeService = nodeService;
     }
 
     private int GetUserId()
@@ -29,6 +32,20 @@ public class RoomController : ControllerBase
         return int.Parse(claim.Value);
     }
 
+    private NodeInfo GetBestNode()
+    {
+        var activeNode = _nodeService.GetAnyActiveNode();
+        if (activeNode == null) return null;
+
+        return new NodeInfo
+        {
+            Ip = activeNode.ip_address,
+            Port = activeNode.port,
+            MaxUsers = 100,
+            CurrentUsers = 0
+        };
+    }
+
     // --- ENDPOINT MỚI CHO NODE SERVER ---
     [AllowAnonymous] // Cho phép Node Server gọi báo cáo trạng thái mà không cần JWT Token
     [HttpPost("update-status")]
@@ -36,8 +53,10 @@ public class RoomController : ControllerBase
     {
         try
         {
-            // Lưu ý: Bạn cần đảm bảo trong RoomService đã có hàm UpdateUserStatus
             _roomService.UpdateUserStatus(req.user_id, req.room_id, req.is_online);
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine($"[MASTER - ROOM] Cập nhật trạng thái DB: User ID {req.user_id} -> Phòng {req.room_id} -> {(req.is_online == 1 ? "ONLINE" : "OFFLINE")}");
+            Console.ResetColor();
             return Ok();
         }
         catch (Exception ex)
@@ -49,49 +68,75 @@ public class RoomController : ControllerBase
     [HttpPost("create")]
     public IActionResult CreateRoom(CreateRoomRequest req)
     {
-        Console.WriteLine("\n=========================================");
         try
         {
             int userId = GetUserId();
-            Console.WriteLine($"[API ROOM] NHẬN YÊU CẦU TẠO PHÒNG TỪ USER ID: {userId}");
-            Console.WriteLine($"[API ROOM] Payload: Tên={req.room_name}, Private={req.is_private}, Có Pass={!string.IsNullOrEmpty(req.password)}, Node={req.node_id}");
-
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.WriteLine($"[MASTER - ROOM] User ID {userId} yêu cầu tạo phòng vẽ mới: '{req.room_name}'");
+            Console.ResetColor();
             var room = _roomService.CreateRoom(req, userId);
 
-            Console.WriteLine("[API ROOM] => THÀNH CÔNG: Đã tạo phòng và lưu vào Database!");
-            Console.WriteLine("=========================================\n");
+            // ĐIỀU HƯỚNG TỚI NODE
+            var node = GetBestNode();
+            if (node == null)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[MASTER - LOAD BALANCER] THẤT BẠI: Từ chối tạo phòng của User {userId} do không tìm thấy Node khả dụng.");
+                Console.ResetColor();
+                return BadRequest(new { message = "Hệ thống máy chủ vẽ đang quá tải!" });
+            }
 
-            return Ok(room);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[MASTER SERVER] Tạo phòng thành công. Điều hướng User {userId} sang Node [{node.Ip}:{node.Port}]");
+            Console.ResetColor();
+
+            // Gộp thông tin phòng và cấu hình Node trả về cho WPF
+            return Ok(new
+            {
+                roomInfo = room,
+                nodeIp = node.Ip,
+                nodePort = node.Port
+            });
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[API ROOM] => LỖI TẠO PHÒNG: {ex.Message}");
-            return BadRequest(new { message = ex.Message });
-        }
+        catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpPost("join")]
     public IActionResult JoinRoom(JoinRoomRequest req)
     {
-        Console.WriteLine("\n=========================================");
         try
         {
             int userId = GetUserId();
-            Console.WriteLine($"[API ROOM] NHẬN YÊU CẦU VÀO PHÒNG TỪ USER ID: {userId}");
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.WriteLine($"[MASTER - ROOM] User ID {userId} gửi yêu cầu xin tham gia vào phòng ID: {req.room_id}");
+            Console.ResetColor();
 
             var room = _roomService.JoinRoom(req, userId);
+            if (room == null) return NotFound(new { message = "Room not found" });
 
-            if (room == null)
+            // ĐIỀU HƯỚNG TỚI NODE
+            var node = GetBestNode();
+            if (node == null)
             {
-                return NotFound(new { message = "Room not found" });
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[MASTER SERVER - LOAD BALANCER] THẤT BẠI: Từ chối điều hướng User {userId} do không tìm thấy Node khả dụng.");
+                Console.ResetColor();
+
+                return BadRequest(new { message = "Hệ thống máy chủ vẽ đang quá tải!" });
             }
 
-            return Ok(room);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[MASTER SERVER - LOAD BALANCER] ĐIỀU HƯỚNG THÀNH CÔNG: User {userId} -> Node [{node.Ip}:{node.Port}]");
+            Console.ResetColor();
+
+            return Ok(new
+            {
+                roomInfo = room,
+                nodeIp = node.Ip,
+                nodePort = node.Port
+            });
         }
-        catch (Exception ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpPost("leave")]
@@ -101,12 +146,14 @@ public class RoomController : ControllerBase
         {
             int userId = GetUserId();
             _roomService.LeaveRoom(req.room_id, userId);
+            
+            Console.ForegroundColor = ConsoleColor.Magenta; 
+            Console.WriteLine($"[MASTER - ROOM] User ID {userId} đã ngắt kết nối và rời phòng {req.room_id}.");
+            Console.ResetColor();
+             
             return Ok();
         }
-        catch (Exception ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
+        catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpGet("list")]
@@ -130,6 +177,14 @@ public class RoomController : ControllerBase
 }
 
 // Data Transfer Object cho Node Server
+public class NodeInfo
+{
+    public string Ip { get; set; } = string.Empty;
+    public int Port { get; set; }
+    public int MaxUsers { get; set; }
+    public int CurrentUsers { get; set; }
+}
+
 public class UserStatusUpdateDto
 {
     public int user_id { get; set; }

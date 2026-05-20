@@ -19,6 +19,9 @@ namespace DrawServer
 
         private TcpListener server;
 
+        // Lưu lại port của Node này và thông tin Master Server
+        private int _currentNodePort;
+
         // Quản lý phòng: roomId -> danh sách các Client trong phòng đó
         private ConcurrentDictionary<string, ConcurrentDictionary<TcpClient, byte>> rooms
             = new ConcurrentDictionary<string, ConcurrentDictionary<TcpClient, byte>>();
@@ -26,16 +29,25 @@ namespace DrawServer
         // Quản lý thông tin User trên mỗi Connection (UserId, RoomId, Username)
         private ConcurrentDictionary<TcpClient, (int UserId, string RoomId, string Username)> clientMetadata
             = new ConcurrentDictionary<TcpClient, (int UserId, string RoomId, string Username)>();
+        
         private bool _isRunning = true;
         private static readonly HttpClient _httpClient = new HttpClient();
         private const string MasterApiUrl = "http://localhost:5274/api/room/update-status";
 
         public void Start(int port)
         {
+            _currentNodePort = port;
             server = new TcpListener(IPAddress.Any, port);
             server.Start();
-            Console.WriteLine($"[NODE SERVER] Đang chạy tại cổng: {port}...");
 
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("====================================================================");
+            Console.WriteLine($"[NODE SERVER] Khởi tạo thành công socket lắng nghe kết nối tại port: {port}");
+            Console.WriteLine("====================================================================");
+            Console.ResetColor();
+
+            Task.Run(async () => await RegisterWithMasterAsync());
+            _isRunning = true;
             Task.Run(() => AcceptClientsAsync());
         }
 
@@ -53,7 +65,7 @@ namespace DrawServer
                     // Giao Client này cho 1 Task độc lập xử lý
                     _ = Task.Run(() => HandleClientAsync(client));
                 }
-                catch (Exception ex) { Console.WriteLine("Lỗi Accept: " + ex.Message); }
+                catch (Exception ex) { Console.WriteLine("[NODE SERVER] Lỗi kết nối ngoại vi: " + ex.Message); }
             }
         }
 
@@ -81,7 +93,8 @@ namespace DrawServer
             {
                 byte[] bytes = new byte[8192]; // Buffer lớn hơn một chút
                 StringBuilder messageBuffer = new StringBuilder();
-                 _ = HeartbeatCheckAsync(client);
+                _ = HeartbeatCheckAsync(client);
+                bool isGracefulLeave = false;
 
                 try
                 {
@@ -100,7 +113,10 @@ namespace DrawServer
                             string singleMessage = currentContent.Substring(0, nextLineIndex).Trim();
                             if (!string.IsNullOrEmpty(singleMessage))
                             {
-                                ProcessLogic(client, singleMessage); // Tách logic xử lý ra hàm riêng
+                                if (ProcessLogic(client, singleMessage))
+                                {
+                                    isGracefulLeave = true;
+                                }
                             }
 
                             currentContent = currentContent.Substring(nextLineIndex + 1);
@@ -112,7 +128,7 @@ namespace DrawServer
 
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[NODE SERVER] Client ngắt kết nối: {ex.Message}");
+                    
                 }
                 finally
                 {
@@ -124,19 +140,23 @@ namespace DrawServer
                         targetRoomId = metadata.RoomId;
                         targetUserId = metadata.UserId;
                         targetUsername = metadata.Username;
-                        
+
                         // Cập nhật is_online = 0 trong DB
-                        using (var conn = new MySqlConnection(connectionString))
+                        try
                         {
-                            conn.Open();
-                            string updateSql = "UPDATE RoomMembers SET is_online = 0 WHERE user_id = @uid AND room_id = @rid";
-                            using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
+                            using (var conn = new MySqlConnection(connectionString))
                             {
-                                cmd.Parameters.AddWithValue("@uid", targetUserId);
-                                cmd.Parameters.AddWithValue("@rid", int.Parse(targetRoomId));
-                                cmd.ExecuteNonQuery();
+                                conn.Open();
+                                string updateSql = "UPDATE RoomMembers SET is_online = 0 WHERE user_id = @uid AND room_id = @rid";
+                                using (var cmd = new MySqlCommand(updateSql, conn))
+                                {
+                                    cmd.Parameters.AddWithValue("@uid", targetUserId);
+                                    cmd.Parameters.AddWithValue("@rid", int.Parse(targetRoomId));
+                                    cmd.ExecuteNonQuery();
+                                }
                             }
                         }
+                        catch (Exception ex) { Console.WriteLine("[NODE - DB ERROR] Lỗi cập nhật trạng thái ngoại tuyến: " + ex.Message); }
 
                         _ = NotifyMasterStatusChanged(targetUserId, int.Parse(targetRoomId), false);
                     }
@@ -161,15 +181,25 @@ namespace DrawServer
                         BroadcastToRoom(targetRoomId, leaveJson, client);
                     }
 
-                    Console.WriteLine($"[NODE SERVER] Client {targetUserId} disconnected + cleaned up room {targetRoomId}");
+                    if (isGracefulLeave)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Magenta;
+                        Console.WriteLine($"[NODE SERVER] User ID {targetUserId} đã rời phòng {targetRoomId}. Giải phóng tài nguyên Socket.");
+                        Console.ResetColor();
+                    }
+                    else if (targetUserId > 0) // Trường hợp crash app, tắt ngang, mất mạng đột ngột
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkYellow;
+                        Console.WriteLine($"[NODE SERVER] MẤT KẾT NỐI ĐỘT NGỘT: User ID {targetUserId} bị rớt mạng khỏi phòng {targetRoomId}. Đã tự động dọn dẹp hạ tầng.");
+                        Console.ResetColor();
+                    }
                 }
             }
         }
-        private void ProcessLogic(TcpClient client, string jsonMsg)
+        private bool ProcessLogic(TcpClient client, string jsonMsg)
         {
             try
             {
-                Console.WriteLine("RAW JSON = " + jsonMsg);
 
                 var options = new JsonSerializerOptions
                 {
@@ -177,7 +207,7 @@ namespace DrawServer
                 };
 
                 var msg = JsonSerializer.Deserialize<DrawMessage>(jsonMsg, options);
-                if (msg == null) return;
+                if (msg == null) return false;
 
                 if (msg.type == "JOIN")
                 {
@@ -221,8 +251,10 @@ namespace DrawServer
                     }
                     // Cập nhật Online trong DB
                     _ = NotifyMasterStatusChanged(msg.userId, int.Parse(msg.roomId), true);
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[NODE - USER] Client ID {msg.userId} ({msg.username}) đã kết nối vào phòng vẽ: {msg.roomId}");
+                    Console.ResetColor();
 
-                    Console.WriteLine($"Client {msg.userId} vào phòng: {msg.roomId}");
                     // Phát lệnh JOIN của thành viên mới này cho TẤT CẢ mọi người trong phòng biết để cập nhật UI
                     string joinJson = JsonSerializer.Serialize(msg);
                     BroadcastToRoom(msg.roomId, joinJson, client);
@@ -231,14 +263,6 @@ namespace DrawServer
                     SendChatHistoryToClient(client, msg.roomId);
                 }
                 else if (
-<<<<<<< HEAD
-                    msg.type == "DRAW" ||
-                    msg.type == "ERASE" ||
-                    msg.type == "SHAPE" ||
-                    msg.type == "TEXT" ||
-                    msg.type == "CLEAR" ||
-                    msg.type == "CHAT"
-=======
                      msg.type == "DRAW" ||
                      msg.type == "ERASE" ||
                      msg.type == "SHAPE" ||
@@ -246,7 +270,6 @@ namespace DrawServer
                      msg.type == "CLEAR" ||
                      msg.type == "DELETE_TEXT" ||
                      msg.type == "CHAT"
->>>>>>> fab2d1b366c8423b7efe0aaf700a8f4125580c9d
                 )
                 {
                     if (clientMetadata.TryGetValue(client, out var metadata))
@@ -254,28 +277,33 @@ namespace DrawServer
                         msg.userId = metadata.UserId;
                     }
 
-                    Console.WriteLine(
-                        "[SERVER] ACTION USER ID = "
-                        + msg.userId);
-
-                    string updatedJson = JsonSerializer.Serialize(msg);
-
-                    BroadcastToRoom(msg.roomId, updatedJson, client);
-
                     if (msg.type == "CHAT")
                     {
+                        Console.ForegroundColor = ConsoleColor.White;
+                        Console.WriteLine($"[NODE - CHAT] Phòng {msg.roomId} | User {msg.userId}: {msg.text}");
+                        Console.ResetColor();
                         SaveChatMessage(msg);
+                    }
+                    else if (msg.type == "CLEAR")
+                    {
+                        // Hiện log cảnh báo nếu có ai xóa sạch canvas
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[NODE - ACTION] CẢNH BÁO: User {msg.userId} vừa xóa sạch Canvas phòng {msg.roomId}!");
+                        Console.ResetColor();
+                        SaveDrawAction(msg);
                     }
                     else
                     {
                         SaveDrawAction(msg);
                     }
 
+                    string updatedJson = JsonSerializer.Serialize(msg);
+                    BroadcastToRoom(msg.roomId, updatedJson, client);
+
                 }
 
                 else if (msg.type == "DRAW_BATCH" && msg.actions != null && msg.actions.Count > 0)
                 {
-                    Console.WriteLine($"[BATCH] Received batch of {msg.actions.Count} actions");
                     foreach (var action in msg.actions)
                     {
                         // Gán lại roomId và userId cho từng action
@@ -291,47 +319,27 @@ namespace DrawServer
 
                 else if (msg.type == "UNDO")
                 {
-                    Console.WriteLine("[SERVER] UNDO command received from user " + msg.userId);
-                    
                     // Broadcast UNDO command để tất cả client cùng undo
                     string undoJson = JsonSerializer.Serialize(msg);
                     BroadcastToRoom(msg.roomId, undoJson, client);
                 }
                 else if (msg.type == "REDO")
                 {
-                    Console.WriteLine("[SERVER] REDO command received from user " + msg.userId);
-                    
                     // Broadcast REDO command để tất cả client cùng redo
                     string redoJson = JsonSerializer.Serialize(msg);
                     BroadcastToRoom(msg.roomId, redoJson, client);
                 }
                 else if (msg.type == "LEAVE")
                 {
-                    // Xử lý cập nhật DB khi nhận lệnh LEAVE chủ động
-                    if (clientMetadata.TryRemove(client, out var metadata))
-                    {
-                        _ = NotifyMasterStatusChanged(metadata.UserId, int.Parse(metadata.RoomId), false);
-                    }
-                    RemoveClientFromRoom(msg.roomId, client);
-                    using (var conn = new MySqlConnection(connectionString))
-                    {
-                        conn.Open();
-                        string updateSql = "UPDATE RoomMembers SET is_online = 0 WHERE user_id = @uid AND room_id = @rid";
-                        using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
-                        {
-                            cmd.Parameters.AddWithValue("@uid", msg.userId);
-                            cmd.Parameters.AddWithValue("@rid", int.Parse(msg.roomId));
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                    // Gửi thông tin LEAVE này cho tất cả những người còn lại trong phòng
-                    string leaveJson = JsonSerializer.Serialize(msg);
-                    BroadcastToRoom(msg.roomId, leaveJson, client);
+                    Console.ForegroundColor = ConsoleColor.Magenta;
+                    Console.WriteLine($"[NODE - USER] Client ID {msg.userId} chủ động phát tín hiệu LEAVE rời phòng {msg.roomId}");
+                    Console.ResetColor();
 
-                    Console.WriteLine($"Client {msg.userId} chủ động rời phòng: {msg.roomId}");
+                    return true; // Kích hoạt cờ báo hiệu Graceful Leave cho khối lệnh dọn dẹp ở ngoài
                 }
             }
             catch (Exception ex) { Console.WriteLine("Lỗi xử lý JSON: " + ex.Message); }
+            return false;
         }
 
         // Hàm gọi API báo cho Master Server cập nhật Database
@@ -345,7 +353,54 @@ namespace DrawServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Không thể báo cáo trạng thái tới Master: {ex.Message}");
+                Console.WriteLine($"[NODE SERVER - ERROR] Thất bại khi gửi báo cáo trạng thái tới Master API Gateway: {ex.Message}");
+            }
+        }
+        private async Task RegisterWithMasterAsync()
+        {
+            try
+            {
+                await Task.Delay(1500);
+
+                Console.WriteLine("[NODE SERVER] Đang gửi gói tin đăng ký tự động lên Master Server...");
+
+                var registerPayload = new
+                {
+                    ip_address = "127.0.0.1", // Nếu chạy khác máy, hãy đổi thành IP LAN/WAN của máy này
+                    port = _currentNodePort
+                };
+
+                string jsonString = JsonSerializer.Serialize(registerPayload);
+                var content = new StringContent(jsonString, Encoding.UTF8, "application/json");
+
+                // Gửi POST Request lên API của Master Server (Cổng 5274)
+                var response = await _httpClient.PostAsync("http://localhost:5274/api/node/register", content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    string responseBody = await response.Content.ReadAsStringAsync();
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[NODE SERVER] TỰ ĐỘNG ĐĂNG KÝ THÀNH CÔNG! Đã ghi nhận vào cụm phân phối Master Server.");
+                    Console.WriteLine($"[NODE SERVER] Dữ liệu phản hồi: {responseBody}");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    string errorDetail = await response.Content.ReadAsStringAsync();
+
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"[NODE SERVER] Đăng ký thất bại. Master Server trả về lỗi: {response.StatusCode}");
+                    Console.WriteLine($"[NODE SERVER] Chi tiết: {errorDetail}");
+                    Console.ResetColor();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[NODE SERVER] LỖI MẠNG: Không thể kết nối tới Master Server tại địa chỉ http://localhost:5274");
+                Console.WriteLine($"[NODE SERVER] Chi tiết lỗi: {ex.Message}");
+                Console.ResetColor();
             }
         }
 
@@ -399,11 +454,6 @@ namespace DrawServer
 
         private void SaveDrawAction(DrawMessage msg)
         {
-            Console.WriteLine("===== SAVE DRAW =====");
-            Console.WriteLine("roomId = " + msg.roomId);
-            Console.WriteLine("userId = " + msg.userId);
-            Console.WriteLine("type = " + msg.type);
-
             try
             {
                 using (MySqlConnection conn =
@@ -528,8 +578,7 @@ namespace DrawServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine(
-                    "[LOAD HISTORY ERROR] " + ex.Message);
+                Console.WriteLine("[NODE SERVER - DB ERROR] Tải lịch sử phòng vẽ lỗi: " + ex.Message);
             }
 
             return history;
@@ -563,8 +612,7 @@ namespace DrawServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine(
-                    "[SEND HISTORY ERROR] " + ex.Message);
+                Console.WriteLine("[NODE SERVER] Lỗi đồng bộ nét vẽ cũ: " + ex.Message);
             }
         }
 
@@ -613,8 +661,7 @@ namespace DrawServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine(
-                    "[LOAD CHAT HISTORY ERROR] " + ex.Message);
+                Console.WriteLine("[NODE SERVER - DB ERROR] Tải lịch sử chat lỗi: " + ex.Message);
             }
 
             return history;
@@ -646,8 +693,7 @@ namespace DrawServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine(
-                    "[SEND CHAT HISTORY ERROR] " + ex.Message);
+                Console.WriteLine("[NODE SERVER] Lỗi đồng bộ dữ liệu chat cũ: " + ex.Message);
             }
         }
 
@@ -659,4 +705,5 @@ namespace DrawServer
             }
         }
     }
+
 }

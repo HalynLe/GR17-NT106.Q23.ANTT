@@ -39,7 +39,12 @@ namespace DrawClient.ViewModels
         public string ip { get; set; }
         public int port { get; set; }
     }
-
+    public class RoomConnectionResponse
+    {
+        public Room RoomInfo { get; set; }
+        public string NodeIp { get; set; }
+        public int NodePort { get; set; }
+    }
     public class LobbyViewModel : INotifyPropertyChanged
     {
         private ObservableCollection<Room> _rooms;
@@ -267,36 +272,32 @@ namespace DrawClient.ViewModels
 
                 if (response.IsSuccessStatusCode)
                 {
-                    string jsonResponse =
-                        await response.Content.ReadAsStringAsync();
-
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
                     int createdRoomId = 0;
 
-                    using (JsonDocument doc =
-                        JsonDocument.Parse(jsonResponse))
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                    var result = JsonSerializer.Deserialize<RoomConnectionResponse>(jsonResponse, options);
+
+                    if (result != null && result.RoomInfo != null)
                     {
-                        if (doc.RootElement.TryGetProperty(
-                            "room_id",
-                            out JsonElement roomIdElement))
-                        {
-                            createdRoomId =
-                                roomIdElement.GetInt32();
-                        }
+                        createdRoomId = result.RoomInfo.room_id;
                     }
 
-                    await CallJoinApi(
-                        createdRoomId,
-                        newRoomReq.password);
-
-                    await LoadRooms();
+                    if (createdRoomId > 0)
+                    {
+                        await CallJoinApi(createdRoomId, newRoomReq.password);
+                        await LoadRooms();
+                    }
+                    else
+                    {
+                        MessageBox.Show("Tạo phòng thành công nhưng không bóc tách được dữ liệu ID phòng.");
+                    }
                 }
                 else
                 {
-                    string err =
-                        await response.Content.ReadAsStringAsync();
-
-                    MessageBox.Show(
-                        "Lỗi từ server: " + err);
+                    string err = await response.Content.ReadAsStringAsync();
+                    MessageBox.Show("Lỗi từ server: " + err);
                 }
             }
             catch (Exception ex)
@@ -396,70 +397,46 @@ namespace DrawClient.ViewModels
 
                 if (response.IsSuccessStatusCode)
                 {
-                    string jsonResponse =
-                        await response.Content.ReadAsStringAsync();
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-                    var options =
-                        new JsonSerializerOptions
-                        {
-                            PropertyNameCaseInsensitive = true
-                        };
+                    var result = JsonSerializer.Deserialize<RoomConnectionResponse>(jsonResponse, options);
 
-                    var result =
-                        JsonSerializer.Deserialize<Room>(
-                            jsonResponse,
-                            options);
-
-                    // FIX NULL CRASH
-                    if (result == null || result.node == null)
+                    if (result == null || result.RoomInfo == null || string.IsNullOrEmpty(result.NodeIp))
                     {
-                                MessageBox.Show(
-                            "Dữ liệu phòng không hợp lệ.");
+                        MessageBox.Show("Dữ liệu phân phối phòng từ Master Server không hợp lệ.");
                         return;
                     }
 
-                    ClientSocket.Instance.CurrentUserId =
-                        LoginViewModel.CurrentUserId;
+                    ClientSocket.Instance.CurrentUserId = LoginViewModel.CurrentUserId;
+                    ClientSocket.Instance.CurrentUsername = LoginViewModel.CurrentUsername;
 
-                    ClientSocket.Instance.CurrentUsername =
-                        LoginViewModel.CurrentUsername;
-
-                    bool connected =
-                        ClientSocket.Instance.Connect(
-                            result.node.ip,
-                            result.node.port);
+                    // 1. Kết nối Socket trực tiếp tới địa chỉ IP và Cổng của Node được Master phân phối từ DB
+                    bool connected = ClientSocket.Instance.Connect(result.NodeIp, result.NodePort);
 
                     if (connected)
                     {
+                        // 2. Gửi lệnh gửi lệnh chào JOIN qua Socket tới Node Server để đồng bộ phòng
                         ClientSocket.Instance.Send(new
                         {
                             type = "JOIN",
-                            roomId = result.Id,
-                            userId =
-                                ClientSocket.Instance.CurrentUserId,
-                            username =
-                                ClientSocket.Instance.CurrentUsername
+                            roomId = result.RoomInfo.Id,
+                            userId = ClientSocket.Instance.CurrentUserId,
+                            username = ClientSocket.Instance.CurrentUsername
                         });
 
-                        GoToCanvas?.Invoke(
-                            result.Id,
-                            result.room_name,
-                            password);
-                       
+                        // 3. Chuyển View màn hình sang Canvas vẽ tranh chung
+                        GoToCanvas?.Invoke(result.RoomInfo.Id, result.RoomInfo.room_name, password);
                     }
                     else
                     {
-                        MessageBox.Show(
-                            "Dữ liệu phòng từ Server trả về không hợp lệ.");
+                        MessageBox.Show($"Không thể kết nối Realtime tới Máy chủ vẽ được chỉ định [{result.NodeIp}:{result.NodePort}]. Vui lòng thử lại!");
                     }
                 }
                 else
                 {
-                    string err =
-                        await response.Content.ReadAsStringAsync();
-
-                    MessageBox.Show(
-                        "Không thể tham gia phòng: " + err);
+                    string err = await response.Content.ReadAsStringAsync();
+                    MessageBox.Show("Không thể tham gia phòng: " + err);
                 }
             }
             catch (Exception ex)

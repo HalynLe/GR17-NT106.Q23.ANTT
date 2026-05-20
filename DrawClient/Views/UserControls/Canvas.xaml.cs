@@ -523,7 +523,6 @@ namespace DrawClient.Views.UserControls
                     new Point[] { lastPoint, currentPoint },
                     new EllipseStylusShape(_viewModel.Toolbar.EraserSize, _viewModel.Toolbar.EraserSize));
 
-<<<<<<< HEAD
                 // FIX: Gửi lệnh ERASE lên server (không phải DRAW)
                 var eraseMsg = new DrawMessage
                 {
@@ -540,13 +539,11 @@ namespace DrawClient.Views.UserControls
                 };
                 ClientSocket.Instance.Send(eraseMsg);
                 
-=======
                 // Gọi hàm quét chữ khi rê chuột
                 EraseTextAtPoint(currentPoint);
 
                 DrawNetworkLine(lastPoint, currentPoint, _viewModel.Toolbar.CurrentColor, _viewModel.Toolbar.CurrentThickness);
                 _viewModel.SendDrawData(lastPoint, currentPoint);
->>>>>>> fab2d1b366c8423b7efe0aaf700a8f4125580c9d
                 lastPoint = currentPoint;
                 UpdateEraserCursor(currentPoint);
                 return;

@@ -25,10 +25,23 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginRequest req)
     {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[MASTER - AUTH] Tài khoản [{req.username}] đang yêu cầu xác thực đăng nhập...");
+        Console.ResetColor();
+
         var (user, token) = _authService.Login(req);
 
         if (user == null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"[MASTER - AUTH] XÁC THỰC THẤT BẠI: Tài khoản [{req.username}] cung cấp sai thông tin.");
+            Console.ResetColor();
             return Unauthorized(new { message = "Invalid credentials" });
+        }
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"[MASTER - AUTH] ĐĂNG NHẬP THÀNH CÔNG -> User ID: {user.user_id} | Email: {user.email}");
+        Console.ResetColor();
 
         return Ok(new
         {
