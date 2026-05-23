@@ -391,7 +391,7 @@
                     </Button>
 
                     <!-- Redo -->
-                    <Button Command="{Binding UndoCommand}"
+                    <Button Command="{Binding RedoCommand}"
                     Width="36"
                     Height="36"
                     Background="Transparent"
