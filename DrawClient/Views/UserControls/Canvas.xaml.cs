@@ -1,6 +1,7 @@
 ﻿using DrawClient.Models;
 using DrawClient.Services;
 using DrawClient.ViewModels;
+using DrawClient.Views.UserControls;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -13,7 +14,9 @@ using System.Windows.Ink;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 
 namespace DrawClient.Views.UserControls
@@ -29,6 +32,15 @@ namespace DrawClient.Views.UserControls
         private System.Windows.Shapes.Rectangle _ocrSelectionRect;
         private Point _ocrStartPoint;
         private DispatcherTimer _laserTimer;
+        // Laser visual trail
+        private Polyline _currentLaserPolyline;
+        private readonly TimeSpan _laserFadeDuration = TimeSpan.FromMilliseconds(1200);
+        private readonly double _laserThickness = 8.0;
+        // Quản lý Laser của các client khác: UserId -> (Đường Laser, Timer xóa mờ)
+        private Dictionary<string, (Polyline Line, DispatcherTimer Timer)> _remoteLasers = new Dictionary<string, (Polyline, DispatcherTimer)>();
+        //khai bái biến lưu vị trí cũ
+        private Rect _oldSelectionBounds;
+
 
         public Canvas()
         {
@@ -38,7 +50,7 @@ namespace DrawClient.Views.UserControls
 
             this.PreviewMouseDown += UserControl_PreviewMouseDown;
             //laser
-            this.inkCanvas.MouseMove += InkCanvas_MouseMove;
+            this.MyCanvas.MouseMove += InkCanvas_MouseMove;
 
             _laserTimer = new DispatcherTimer();
             _laserTimer.Interval = TimeSpan.FromSeconds(3);
@@ -62,8 +74,24 @@ namespace DrawClient.Views.UserControls
                 Height = 2,
                 Color = Colors.Black
             };
+            // Đăng ký sự kiện thay đổi trên InkCanvas
+            this.MyCanvas.SelectionChanged += MyCanvas_SelectionChanged;
+            this.MyCanvas.SelectionMoved += MyCanvas_SelectionMoved;
+            this.MyCanvas.SelectionResized += MyCanvas_SelectionResized;
+            this.MyCanvas.SelectionMoving += MyCanvas_SelectionMoving;
+        }
+        private void MyCanvas_SelectionMoving(object sender, InkCanvasSelectionEditingEventArgs e)
+        {
+            // Lưu lại vị trí Bounds cũ ngay khi người dùng bắt đầu click giữ và kéo chuột di chuyển
+            _oldSelectionBounds = MyCanvas.GetSelectedStrokes().GetBounds();
         }
 
+        private void MyCanvas_SelectionMoved(object sender, EventArgs e)
+        {
+            // Gọi chung hàm xử lý transform để gửi dữ liệu nhất quán 
+            // (bao gồm cả Index của các nét vẽ và sự thay đổi Bounds)
+            SyncSelectionTransform();
+        }
         private void Canvas_Unloaded(object sender, RoutedEventArgs e)
         {
             if (_viewModel != null)
@@ -79,6 +107,61 @@ namespace DrawClient.Views.UserControls
             }
         }
 
+        private void MyCanvas_SelectionChanged(object sender, EventArgs e)
+        {
+            var selectedStrokes = MyCanvas.GetSelectedStrokes();
+            if (selectedStrokes != null && selectedStrokes.Count > 0)
+            {
+                // Ghi lại khung tọa độ gốc trước khi kéo đi
+                _oldSelectionBounds = selectedStrokes.GetBounds();
+            }
+        }
+
+        private void MyCanvas_SelectionResized(object sender, EventArgs e)
+        {
+            SyncSelectionTransform();
+        }
+
+        // Hàm xử lý đóng gói danh sách Index và gửi đi
+        private void SyncSelectionTransform()
+        {
+            if (_viewModel == null) return;
+
+            var selectedStrokes = MyCanvas.GetSelectedStrokes();
+            if (selectedStrokes == null || selectedStrokes.Count == 0) return;
+
+            Rect newBounds = selectedStrokes.GetBounds();
+
+            // Kiểm tra xem có dịch chuyển thực sự không
+            if (Math.Abs(newBounds.X - _oldSelectionBounds.X) > 0.1 ||
+                Math.Abs(newBounds.Y - _oldSelectionBounds.Y) > 0.1 ||
+                Math.Abs(newBounds.Width - _oldSelectionBounds.Width) > 0.1 ||
+                Math.Abs(newBounds.Height - _oldSelectionBounds.Height) > 0.1)
+            {
+                // Tìm xem các nét vẽ đang chọn nằm ở vị trí thứ mấy trong MyCanvas.Strokes
+                List<int> selectedIndices = new List<int>();
+                foreach (var stroke in selectedStrokes)
+                {
+                    int index = MyCanvas.Strokes.IndexOf(stroke);
+                    if (index >= 0)
+                    {
+                        selectedIndices.Add(index);
+                    }
+                }
+
+                if (selectedIndices.Count > 0)
+                {
+                    // Chuyển mảng Index thành chuỗi: "2,5,6"
+                    string indicesData = string.Join(",", selectedIndices);
+
+                    // Gửi cả Index lẫn tọa độ hộp để tính toán ma trận tỉ lệ
+                    _viewModel.SendSelectionTransform(indicesData, _oldSelectionBounds, newBounds);
+                }
+
+                _oldSelectionBounds = newBounds;
+            }
+        }
+
         private void ChatMessages_CollectionChanged(
             object sender,
             System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -91,15 +174,23 @@ namespace DrawClient.Views.UserControls
 
         private void Canvas_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
         {
+
+            MyCanvas.SelectionMoved += MyCanvas_SelectionMoved;
+            MyCanvas.SelectionResized += MyCanvas_SelectionResized;
+            MyCanvas.SelectionChanged += MyCanvas_SelectionChanged;
             // 1. Unsubscribe VM cũ trước
             if (e.OldValue is CanvasViewModel oldVm)
             {
                 oldVm.OnLineReceived -= DrawNetworkLine;
+                oldVm.OnEraseReceived -= EraseNetworkStroke;
+                oldVm.OnLaserReceived -= ShowRemoteLaser;
                 oldVm.OnCanvasCleared -= ClearLocalCanvas;
                 oldVm.PropertyChanged -= ViewModel_PropertyChanged;
                 oldVm.OnShapeReceived -= DrawShape;
                 oldVm.OnTextReceived -= DrawText;
                 oldVm.OnDeleteTextReceived -= DeleteTextFromNetwork;
+                // Hủy đăng ký sự kiện select cũ
+                oldVm.OnSelectionTransformedReceived -= HandleRemoteSelectionTransform;
 
                 if (oldVm.Toolbar != null)
                 {
@@ -115,12 +206,17 @@ namespace DrawClient.Views.UserControls
 
                 // 3. Subscribe đúng instance
                 _viewModel.OnLineReceived += DrawNetworkLine;
+                _viewModel.OnEraseReceived += EraseNetworkStroke;
+                _viewModel.OnLaserReceived += ShowRemoteLaser;
                 _viewModel.OnCanvasCleared += ClearLocalCanvas;
                 _viewModel.PropertyChanged += ViewModel_PropertyChanged;
                 _viewModel.OnShapeReceived += DrawShape;
                 _viewModel.OnTextReceived += DrawText;
                 _viewModel.OnDeleteTextReceived += DeleteTextFromNetwork;
                 _viewModel.ChatMessages.CollectionChanged += ChatMessages_CollectionChanged;
+                // Đăng ký nhận dữ liệu từ ViewModel truyền xuống
+                _viewModel.OnSelectionTransformedReceived += HandleRemoteSelectionTransform;
+
 
                 if (_viewModel.Toolbar != null)
                 {
@@ -152,13 +248,67 @@ namespace DrawClient.Views.UserControls
             switch (action.ActionType)
             {
                 case "DRAW":
-                    DrawLineLocal(action.StartPoint, action.EndPoint, action.Color, action.Thickness);
+                    // Kiểm tra loại bút từ thuộc tính penType hoặc màu sắc
+                    string actionPenType = action.penType?.Trim();
+                    bool isHighlighter = string.Equals(actionPenType, "highlighter", StringComparison.OrdinalIgnoreCase)
+                                         || (action.Color?.StartsWith("[HL]") == true);
+                    bool isFountain = string.Equals(actionPenType, "fountain", StringComparison.OrdinalIgnoreCase);
+
+                    string colorToUse = action.Color.Replace("[HL]", ""); // Lấy mã màu thuần
+                    double thickness = action.Thickness;
+
+                    if (string.IsNullOrWhiteSpace(colorToUse))
+                        colorToUse = "#000000";
+
+                    try
+                    {
+                        StylusPointCollection points = new StylusPointCollection
+                        {
+                            new StylusPoint(action.StartPoint.X, action.StartPoint.Y),
+                            new StylusPoint(action.EndPoint.X, action.EndPoint.Y)
+                        };
+
+                        Color parsedColor = (Color)ColorConverter.ConvertFromString(colorToUse);
+
+                        DrawingAttributes da = new DrawingAttributes
+                        {
+                            Color = parsedColor,
+                            IgnorePressure = true,
+                            IsHighlighter = isHighlighter
+                        };
+                        // ÁP DỤNG ĐÚNG THUỘC TÍNH CHO TỪNG LOẠI BÚT GIỐNG NHƯ KHI VẼ LOCAL
+                        if (isHighlighter)
+                        {
+                            da.Width = thickness * 1.5;
+                            da.Height = thickness * 1.5;
+                            da.StylusTip = StylusTip.Rectangle;
+                            da.FitToCurve = false;
+                        }
+                        else if (isFountain)
+                        {
+                            da.StylusTip = StylusTip.Rectangle;
+                            da.Width = thickness * 0.8;
+                            da.Height = thickness * 1.8;
+                            da.FitToCurve = true;
+                            da.IsHighlighter = false;
+                        }
+                        else // Bút chì / Bút vẽ thường mặc định
+                        {
+                            da.Width = thickness;
+                            da.Height = thickness;
+                            da.StylusTip = StylusTip.Ellipse;
+                            da.FitToCurve = true;
+                        }
+                        Stroke stroke = new Stroke(points) { DrawingAttributes = da };
+                        MyCanvas.Strokes.Add(stroke);
+                    }
+                    catch { }
                     break;
                 case "SHAPE":
-                    var points = CreateShapePointsFromAction(action);
-                    if (points != null)
+                    var points2 = CreateShapePointsFromAction(action);
+                    if (points2 != null)
                     {
-                        var stroke = new Stroke(points)
+                        var stroke = new Stroke(points2)
                         {
                             DrawingAttributes = new DrawingAttributes
                             {
@@ -172,9 +322,28 @@ namespace DrawClient.Views.UserControls
                         MyCanvas.Strokes.Add(stroke);
                     }
                     break;
-                    // ERASE không cần xử lý vì nét đó đã bị xóa khỏi danh sách action
+                case "ERASE":
+                    try
+                    {
+                        double safeThickness = Math.Max(2.0, action.Thickness);
+                        Point start = action.StartPoint;
+                        Point end = action.EndPoint;
+
+                        // Chống lỗi điểm trùng nhau
+                        if (start.X == end.X && start.Y == end.Y)
+                        {
+                            end = new Point(start.X + 0.1, start.Y + 0.1);
+                        }
+
+                        MyCanvas.Strokes.Erase(
+                            new Point[] { start, end },
+                            new EllipseStylusShape(safeThickness, safeThickness));
+                    }
+                    catch { }
+                    break;
             }
         }
+
 
         private StylusPointCollection CreateShapePointsFromAction(DrawAction action)
         {
@@ -251,22 +420,24 @@ namespace DrawClient.Views.UserControls
                 };
 
                 // Chỉnh nét vẽ cho từng loại bút
-                switch (vm.Toolbar.CurrentPenType)
+                switch (vm.Toolbar.CurrentPenType?.ToLowerInvariant())
                 {
-                    case "Fountain":
+                    case "fountain":
                         attributes.StylusTip = StylusTip.Rectangle;
                         attributes.Width = size * 0.8;
                         attributes.Height = size * 1.8;
+                        attributes.FitToCurve = true;
                         break;
-                    case "Highlighter":
+
+                    case "highlighter":
                         attributes.IsHighlighter = true;
                         attributes.Height = size * 1.5;
                         attributes.Width = size * 1.5;
                         attributes.StylusTip = StylusTip.Rectangle;
-                        // FitToCurve false để tránh lớp chồng
                         attributes.FitToCurve = false;
                         break;
-                    case "Laser":
+
+                    case "laser":
                         break;
                 }
 
@@ -303,6 +474,7 @@ namespace DrawClient.Views.UserControls
                         MyCanvas.EditingMode = InkCanvasEditingMode.Ink;
                     }
                 }
+
             }
             catch (Exception ex)
             {
@@ -317,6 +489,8 @@ namespace DrawClient.Views.UserControls
             if (e.PropertyName == nameof(CanvasViewModel.CurrentEditingMode) ||
                 e.PropertyName == nameof(CanvasViewModel.SelectedTool))
             {
+                isDrawing = false;
+                isShapeDrawing = false;
                 bool isEraser = _viewModel.SelectedTool?.ToLower() == "eraser";
 
                 if (isEraser)
@@ -372,7 +546,7 @@ namespace DrawClient.Views.UserControls
 
             _viewModel.IsProfilePopoverVisible = false;
         }
-  
+
         private void ClearLocalCanvas()
         {
             Application.Current.Dispatcher.Invoke(() =>
@@ -388,6 +562,13 @@ namespace DrawClient.Views.UserControls
         }
         private void Canvas_MouseDown(object sender, MouseButtonEventArgs e)
         {
+            if (_viewModel?.SelectedTool?.ToLowerInvariant() == "select")
+            {
+                isDrawing = false;
+                isShapeDrawing = false;
+                return; // Thoát ngay, nhường toàn quyền cho InkCanvas tự xử lý vùng chọn
+            }
+
             if (_viewModel?.Toolbar == null) return;
 
             // ocr
@@ -413,6 +594,18 @@ namespace DrawClient.Views.UserControls
 
                     MyCanvas.CaptureMouse();
                     MyCanvas.Cursor = Cursors.Cross;
+                }
+                return;
+            }
+
+            // LASER POINTER: Visual-only, gửi data laser tới client khác
+            if (_viewModel.Toolbar.CurrentPenType?.ToLower() == "laser")
+            {
+                if (e.LeftButton == MouseButtonState.Pressed)
+                {
+                    Point p = e.GetPosition(laserCanvas);
+                    StartLaserStroke(p);
+                    SendLaserPoint(p);
                 }
                 return;
             }
@@ -467,17 +660,44 @@ namespace DrawClient.Views.UserControls
         }
         private void Canvas_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_viewModel?.Toolbar == null || e.LeftButton != MouseButtonState.Pressed)
+            if (_viewModel?.SelectedTool?.ToLowerInvariant() == "select")
+            {
+                isDrawing = false;
+                isShapeDrawing = false;
                 return;
+            }
+
+            if (_viewModel?.Toolbar == null || e.LeftButton != MouseButtonState.Pressed) return;
 
             Point currentPoint = e.GetPosition(MyCanvas);
 
             // Tránh xử lý nếu chuột không thực sự di chuyển (tiết kiệm tài nguyên)
             if (currentPoint == lastPoint) return;
 
+            // *** LASER POINTER CHECK FIRST (PRIORITY) ***
+            // Laser không nên gửi dữ liệu lên server hay lưu history
+            if (_viewModel?.Toolbar?.CurrentPenType?.ToLower() == "laser")
+            {
+                Point p = e.GetPosition(laserCanvas);
+                if (e.LeftButton == MouseButtonState.Pressed)
+                {
+                    AddLaserPoint(p);
+                    SendLaserPoint(p);
+                }
+                else
+                {
+                    ShowLaser(p);
+                }
+                return;  // Exit early - laser is visual-only
+            }
+
             string tool = _viewModel.SelectedTool?.ToLowerInvariant();
             string penType = _viewModel.Toolbar.CurrentPenType?.ToLowerInvariant();
             bool isEraser = _viewModel.Toolbar.IsEraserSelected || tool == "eraser";
+            if (_viewModel.SelectedTool == "eraser")
+            {
+                _viewModel.SendDrawData(lastPoint, currentPoint);
+            }
 
             // 1. CHẾ ĐỘ VẼ HÌNH (SHAPE MODE)
             if (isShapeDrawing)
@@ -538,12 +758,9 @@ namespace DrawClient.Views.UserControls
                     color = "#ERASE"
                 };
                 ClientSocket.Instance.Send(eraseMsg);
-                
+
                 // Gọi hàm quét chữ khi rê chuột
                 EraseTextAtPoint(currentPoint);
-
-                DrawNetworkLine(lastPoint, currentPoint, _viewModel.Toolbar.CurrentColor, _viewModel.Toolbar.CurrentThickness);
-                _viewModel.SendDrawData(lastPoint, currentPoint);
                 lastPoint = currentPoint;
                 UpdateEraserCursor(currentPoint);
                 return;
@@ -552,10 +769,8 @@ namespace DrawClient.Views.UserControls
             // 3. CHẾ ĐỘ VẼ BÚT THƯỜNG (NORMAL DRAW / PENCIL)
             if (_viewModel.Toolbar.IsPencilSelected && e.LeftButton == MouseButtonState.Pressed)
             {
-                // Gửi dữ liệu vẽ đi (Hàm này trong ViewModel sẽ lo việc đóng gói JSON và gửi qua Socket)
+                // SendDrawData() now handles [HL] prefix internally
                 _viewModel.SendDrawData(lastPoint, currentPoint);
-
-                // Cập nhật điểm cuối cho đoạn vẽ tiếp theo
                 lastPoint = currentPoint;
             }
 
@@ -571,15 +786,63 @@ namespace DrawClient.Views.UserControls
                 _ocrSelectionRect.Height = h;
                 System.Windows.Controls.Canvas.SetLeft(_ocrSelectionRect, x);
                 System.Windows.Controls.Canvas.SetTop(_ocrSelectionRect, y);
-                return;
             }
+
         }
         private async void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (_viewModel?.SelectedTool?.ToLowerInvariant() == "select")
+            {
+                isDrawing = false;
+                isShapeDrawing = false;
+                return;
+            }
+            // LASER: hoàn tất trail visual-only
+            if (_viewModel?.Toolbar?.CurrentPenType?.ToLower() == "laser")
+            {
+                EndLaserStroke();
+                return;
+            }
+
             // NORMAL DRAW / ERASER
             if (isDrawing)
             {
                 isDrawing = false;
+
+                Point endPoint = e.GetPosition(MyCanvas);
+
+                // Nếu chỉ nhấp chuột (click) mà không rê chuột, tạo ra một nét vẽ li ti để đồng bộ
+                if (Math.Abs(endPoint.X - _startPoint.X) < 1 && Math.Abs(endPoint.Y - _startPoint.Y) < 1)
+                {
+                    // Tăng offset nhỏ để vượt ngưỡng lọc trong SendDrawData và đảm bảo
+                    // điểm click (dot) được gửi tới server khi người dùng chỉ click.
+                    Point tinyMove = new Point(endPoint.X + 1.0, endPoint.Y + 1.0);
+
+                    bool isEraserClick = _viewModel.Toolbar.IsEraserSelected || _viewModel.SelectedTool?.ToLowerInvariant() == "eraser";
+
+                    if (isEraserClick)
+                    {
+                        var eraseMsg = new DrawMessage
+                        {
+                            type = "ERASE",
+                            roomId = _viewModel.RoomId,
+                            userId = ClientSocket.Instance.CurrentUserId,
+                            username = ClientSocket.Instance.CurrentUsername,
+                            x1 = endPoint.X,
+                            y1 = endPoint.Y,
+                            x2 = tinyMove.X,
+                            y2 = tinyMove.Y,
+                            thickness = _viewModel.Toolbar.EraserSize,
+                            color = "#ERASE"
+                        };
+                        ClientSocket.Instance.Send(eraseMsg);
+                    }
+                    else if (_viewModel.CurrentEditingMode == InkCanvasEditingMode.Ink)
+                    {
+                        // Đồng bộ mọi công cụ vẽ Ink (pencil, highlighter, fountain, ...)
+                        _viewModel.SendDrawData(endPoint, tinyMove);
+                    }
+                }
 
                 if (EraserCursor != null)
                 {
@@ -722,15 +985,19 @@ namespace DrawClient.Views.UserControls
 
         private void InkCanvas_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_viewModel?.Toolbar?.CurrentPenType != "Laser")
-                return;
-
-            if (e.LeftButton != MouseButtonState.Pressed)
+            if (_viewModel?.Toolbar?.CurrentPenType?.ToLower() != "laser")
                 return;
 
             Point p = e.GetPosition(laserCanvas);
 
-            ShowLaser(p);
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                AddLaserPoint(p);
+            }
+            else
+            {
+                ShowLaser(p);
+            }
         }
         private void ShowLaser(Point p)
         {
@@ -738,13 +1005,94 @@ namespace DrawClient.Views.UserControls
             laserDot.Opacity = 1;
 
             System.Windows.Controls.Canvas.SetLeft(laserDot, p.X - laserDot.Width / 2);
-
             System.Windows.Controls.Canvas.SetTop(laserDot, p.Y - laserDot.Height / 2);
 
             // reset timer
             _laserTimer.Stop();
             _laserTimer.Start();
         }
+
+        private void StartLaserStroke(Point p)
+        {
+            _laserTimer.Stop();
+            if (_currentLaserPolyline != null)
+            {
+                laserCanvas.Children.Remove(_currentLaserPolyline);
+                _currentLaserPolyline = null;
+            }
+
+            _currentLaserPolyline = new Polyline
+            {
+                Stroke = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(1, 0),
+                    GradientStops = new GradientStopCollection
+                    {
+                        new GradientStop(Color.FromArgb(255, 255, 200, 0), 0),
+                        new GradientStop(Color.FromArgb(180, 255, 100, 0), 0.4),
+                        new GradientStop(Color.FromArgb(0, 255, 100, 0), 1)
+                    }
+                },
+                StrokeThickness = _laserThickness,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round,
+                Opacity = 1,
+                Effect = new DropShadowEffect
+                {
+                    Color = Color.FromArgb(180, 255, 200, 0),
+                    BlurRadius = 20,
+                    ShadowDepth = 0,
+                    Opacity = 0.9
+                },
+                IsHitTestVisible = false
+            };
+
+            _currentLaserPolyline.Points.Add(p);
+            laserCanvas.Children.Add(_currentLaserPolyline);
+            ShowLaser(p);
+        }
+
+        private void AddLaserPoint(Point p)
+        {
+            if (_currentLaserPolyline == null)
+            {
+                StartLaserStroke(p);
+                return;
+            }
+
+            _currentLaserPolyline.Points.Add(p);
+            ShowLaser(p);
+        }
+
+        private void EndLaserStroke()
+        {
+            if (_currentLaserPolyline == null)
+                return;
+
+            DoubleAnimation fade = new DoubleAnimation
+            {
+                From = _currentLaserPolyline.Opacity,
+                To = 0,
+                Duration = _laserFadeDuration,
+                FillBehavior = FillBehavior.Stop
+            };
+            fade.Completed += (s, e) =>
+            {
+                if (_currentLaserPolyline != null)
+                {
+                    laserCanvas.Children.Remove(_currentLaserPolyline);
+                    _currentLaserPolyline = null;
+                }
+            };
+            _currentLaserPolyline.BeginAnimation(UIElement.OpacityProperty, fade);
+
+            // also fade the dot if still visible
+            _laserTimer.Stop();
+            FadeOutLaser();
+        }
+
         private void FadeOutLaser()
         {
             DoubleAnimation fade = new DoubleAnimation
@@ -760,6 +1108,26 @@ namespace DrawClient.Views.UserControls
             };
 
             laserDot.BeginAnimation(UIElement.OpacityProperty, fade);
+
+            if (_currentLaserPolyline != null)
+            {
+                DoubleAnimation lineFade = new DoubleAnimation
+                {
+                    From = _currentLaserPolyline.Opacity,
+                    To = 0,
+                    Duration = TimeSpan.FromMilliseconds(500),
+                    FillBehavior = FillBehavior.Stop
+                };
+                lineFade.Completed += (s, e) =>
+                {
+                    if (_currentLaserPolyline != null)
+                    {
+                        laserCanvas.Children.Remove(_currentLaserPolyline);
+                        _currentLaserPolyline = null;
+                    }
+                };
+                _currentLaserPolyline.BeginAnimation(UIElement.OpacityProperty, lineFade);
+            }
         }
 
         private void UpdateEraserCursor(Point p)
@@ -781,7 +1149,9 @@ namespace DrawClient.Views.UserControls
             Point p1,
             Point p2,
             string hexColor,
-            double thickness)
+            double thickness,
+            string penType = null,
+            bool isHighlighter = false)
         {
             try
             {
@@ -789,6 +1159,9 @@ namespace DrawClient.Views.UserControls
                 {
                     hexColor = "#000000";
                 }
+
+                // DEBUG: Log penType để kiểm tra
+                Console.WriteLine($"[DrawLineLocal] penType={penType}, isHighlighter={isHighlighter}");
 
                 // REMOTE ERASER
                 if (hexColor == "#ERASE")
@@ -803,6 +1176,12 @@ namespace DrawClient.Views.UserControls
                     return;
                 }
 
+                // KIỂM TRA XEM CÓ PHẢI LÀ NÉT HIGHLIGHT TỪ MÁY KHÁC KHÔNG
+                bool isNetworkHighlighter = isHighlighter || hexColor.StartsWith("[HL]");
+                if (hexColor.StartsWith("[HL]"))
+                {
+                    hexColor = hexColor.Replace("[HL]", ""); // Loại bỏ tiền tố để lấy mã màu Hex chuẩn
+                }
                 StylusPointCollection points =
                     new StylusPointCollection
                     {
@@ -813,16 +1192,32 @@ namespace DrawClient.Views.UserControls
                 Color parsedColor =
                     (Color)ColorConverter.ConvertFromString(hexColor);
 
+                // Thiết lập cấu hình DrawingAttributes chuẩn xác cho nét vẽ mạng
+                DrawingAttributes da = new DrawingAttributes
+                {
+                    Color = parsedColor,
+                    Width = isNetworkHighlighter ? thickness * 1.5 : thickness,
+                    Height = isNetworkHighlighter ? thickness * 1.5 : thickness,
+                    FitToCurve = !isNetworkHighlighter,
+                    IgnorePressure = true,
+                    IsHighlighter = isNetworkHighlighter,
+                    StylusTip = isNetworkHighlighter ? StylusTip.Rectangle : StylusTip.Ellipse
+                };
+
+                if (!isNetworkHighlighter && string.Equals(penType?.Trim(), "fountain", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"[DrawLineLocal] Applying FOUNTAIN style");
+
+                    da.StylusTip = StylusTip.Rectangle;
+                    da.Width = thickness * 0.8;
+                    da.Height = thickness * 1.8;
+                    da.FitToCurve = true;
+                    da.IsHighlighter = false;
+                }
+
                 Stroke stroke = new Stroke(points)
                 {
-                    DrawingAttributes = new DrawingAttributes
-                    {
-                        Color = parsedColor,
-                        Width = thickness,
-                        Height = thickness,
-                        FitToCurve = true,
-                        IgnorePressure = true
-                    }
+                    DrawingAttributes = da
                 };
 
                 MyCanvas.Strokes.Add(stroke);
@@ -833,79 +1228,174 @@ namespace DrawClient.Views.UserControls
             }
         }
 
-        // Trong Canvas.xaml.cs - Tìm các phương thức vẽ từ mạng (ví dụ DrawNetworkLine)
-        private void DrawNetworkLine(Point start, Point end, string colorHex, double thickness)
+        private void DrawNetworkLine(Point start, Point end, string colorStr, double thickness, string penType, bool isSync)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
                 try
                 {
-                    Color color;
-                    //cục tẩy
-                    if (colorHex == "#ERASE")
+                    // 1. KIỂM TRA LỆNH XÓA VÀ XỬ LÝ AN TOÀN
+                    if (colorStr == "#ERASE" || penType?.Equals("eraser", StringComparison.OrdinalIgnoreCase) == true || penType?.Equals("ERASE", StringComparison.OrdinalIgnoreCase) == true)
                     {
-                        // Tạo hình dáng cục tẩy
-                        var eraserShape = new System.Windows.Ink.EllipseStylusShape(thickness, thickness);
+                        // Đảm bảo độ dày xóa luôn lớn hơn 0 (tránh văng lỗi EllipseStylusShape)
+                        double safeThickness = Math.Max(2.0, thickness);
 
-                        // Khởi tạo quỹ đạo đi qua của cục tẩy
-                        Point[] erasePath = new Point[] { start, end };
+                        // Nếu click tại chỗ (điểm đầu = điểm cuối), WPF sẽ không xóa, ta cần tạo 1 độ lệch cực nhỏ
+                        if (start.X == end.X && start.Y == end.Y)
+                        {
+                            end = new Point(start.X + 0.1, start.Y + 0.1);
+                        }
 
-                        // Gọi hàm Erase để cắt bay các nét vẽ cũ
-                        MyCanvas.Strokes.Erase(erasePath, eraserShape);
-
-                        return; // Dừng hàm lại luôn, KHÔNG chạy xuống phần thêm nét (Add stroke) ở dưới nữa
+                        MyCanvas.Strokes.Erase(
+                            new Point[] { start, end },
+                            new EllipseStylusShape(safeThickness, safeThickness));
+                        return; // THOÁT LUÔN
                     }
+                    string incomingPenType = penType?.Trim();
+                    bool isHighlighter = string.Equals(incomingPenType, "highlighter", StringComparison.OrdinalIgnoreCase)
+                                         || (colorStr?.StartsWith("[HL]") == true);
+                    bool isFountain = string.Equals(incomingPenType, "fountain", StringComparison.OrdinalIgnoreCase);
 
-                    // nét vẽ thường
-                    if (string.IsNullOrWhiteSpace(colorHex))
+                    string colorToUse = colorStr.Replace("[HL]", "");
+                    Color parsedColor = (Color)ColorConverter.ConvertFromString(colorToUse);
+
+                    StylusPointCollection points = new StylusPointCollection
+            {
+                new StylusPoint(start.X, start.Y),
+                new StylusPoint(end.X, end.Y)
+            };
+
+                    DrawingAttributes da = new DrawingAttributes
                     {
-                        color = Colors.Transparent;
+                        Color = parsedColor,
+                        IgnorePressure = true,
+                        IsHighlighter = isHighlighter
+                    };
+
+                    // Cấu hình nét vẽ thời gian thực từ mạng truyền về
+                    if (isHighlighter)
+                    {
+                        da.Width = thickness * 1.5;
+                        da.Height = thickness * 1.5;
+                        da.StylusTip = StylusTip.Rectangle;
+                        da.FitToCurve = false;
+                    }
+                    else if (isFountain)
+                    {
+                        da.StylusTip = StylusTip.Rectangle;
+                        da.Width = thickness * 0.8;
+                        da.Height = thickness * 1.8;
+                        da.FitToCurve = true;
+                        da.IsHighlighter = false;
                     }
                     else
                     {
-                        color = (Color)ColorConverter.ConvertFromString(colorHex);
+                        da.Width = thickness;
+                        da.Height = thickness;
+                        da.StylusTip = StylusTip.Ellipse;
+                        da.FitToCurve = true;
                     }
 
-                    var attributes = new DrawingAttributes
-                    {
-                        Color = color,
-                        Width = thickness,
-                        Height = thickness,
-                        FitToCurve = true
-                    };
-
-                    var points = new StylusPointCollection
-                    {
-                        new StylusPoint(start.X, start.Y),
-                        new StylusPoint(end.X, end.Y)
-                    };
-
-                    var stroke = new Stroke(points, attributes);
-
+                    Stroke stroke = new Stroke(points) { DrawingAttributes = da };
                     MyCanvas.Strokes.Add(stroke);
                 }
-                catch (FormatException)
+                catch (Exception ex)
                 {
-                    // 🔥 fallback an toàn tuyệt đối
-                    var fallbackColor = Colors.Black;
-
-                    var attributes = new DrawingAttributes
-                    {
-                        Color = fallbackColor,
-                        Width = thickness,
-                        Height = thickness,
-                        FitToCurve = true
-                    };
-
-                    var points = new StylusPointCollection
-                    {
-                        new StylusPoint(start.X, start.Y),
-                        new StylusPoint(end.X, end.Y)
-                    };
-
-                    MyCanvas.Strokes.Add(new Stroke(points, attributes));
+                    Console.WriteLine("Lỗi vẽ đường truyền từ mạng: " + ex.Message);
                 }
             });
+        }
+
+        private void ShowRemoteLaser(Point position, string colorHex, double thickness, string penType, int userId)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                string remoteUserId = userId.ToString();
+
+                // Luôn dùng LinearGradientBrush vàng-cam-trong suốt và thickness cố định cho laser
+                double fixedThickness = 8.0;
+                LinearGradientBrush laserBrush = new LinearGradientBrush();
+                laserBrush.StartPoint = new Point(0, 0.5);
+                laserBrush.EndPoint = new Point(1, 0.5);
+                laserBrush.GradientStops.Add(new GradientStop(Color.FromRgb(255, 221, 51), 0.0)); // vàng sáng
+                laserBrush.GradientStops.Add(new GradientStop(Color.FromRgb(255, 179, 0), 0.3));   // cam vàng
+                laserBrush.GradientStops.Add(new GradientStop(Color.FromRgb(255, 102, 0), 0.7));   // cam đậm
+                laserBrush.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 102, 0), 1.0)); // trong suốt
+
+                if (!_remoteLasers.ContainsKey(remoteUserId))
+                {
+                    // 1. Tạo mới Polyline với gradient laser đồng bộ giống bên máy vẽ
+                    System.Windows.Shapes.Polyline newPolyline = new System.Windows.Shapes.Polyline
+                    {
+                        Stroke = laserBrush,
+                        StrokeThickness = fixedThickness,
+                        StrokeLineJoin = PenLineJoin.Round,
+                        StrokeStartLineCap = PenLineCap.Round,
+                        StrokeEndLineCap = PenLineCap.Round,
+                        Opacity = 1.0,
+                        Effect = new DropShadowEffect
+                        {
+                            Color = Colors.Orange,
+                            BlurRadius = 15,
+                            ShadowDepth = 0,
+                            Opacity = 0.8
+                        }
+                    };
+                    newPolyline.Points.Add(position);
+                    laserCanvas.Children.Add(newPolyline);
+
+                    DispatcherTimer fadeTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(200)
+                    };
+
+                    fadeTimer.Tick += (s, e) =>
+                    {
+                        fadeTimer.Stop();
+                        FadeOutRemoteLaser(remoteUserId);
+                    };
+
+                    _remoteLasers[remoteUserId] = (newPolyline, fadeTimer);
+                    fadeTimer.Start();
+                }
+                else
+                {
+                    // 2. Nếu đang vẽ tiếp, cứ gán tiếp điểm mới (giữ nguyên gradient)
+                    var laserData = _remoteLasers[remoteUserId];
+
+                    laserData.Line.Stroke = laserBrush;
+                    if (laserData.Line.Effect is DropShadowEffect shadow)
+                    {
+                        shadow.Color = Colors.Orange;
+                    }
+
+                    laserData.Line.Points.Add(position);
+
+                    laserData.Timer.Stop();
+                    laserData.Timer.Start();
+                }
+            });
+        }        // Thêm hàm làm mờ nét vẽ này vào Canvas.xaml.cs
+        private void FadeOutRemoteLaser(string remoteUserId)
+        {
+            if (_remoteLasers.TryGetValue(remoteUserId, out var laserData))
+            {
+                DoubleAnimation fade = new DoubleAnimation
+                {
+                    From = laserData.Line.Opacity,
+                    To = 0.0,
+                    Duration = _laserFadeDuration,
+                    FillBehavior = FillBehavior.Stop
+                };
+
+                fade.Completed += (s, e) =>
+                {
+                    laserCanvas.Children.Remove(laserData.Line);
+                    _remoteLasers.Remove(remoteUserId);
+                };
+
+                laserData.Line.BeginAnimation(UIElement.OpacityProperty, fade);
+            }
         }
         private void DrawShape(DrawMessage msg)
         {
@@ -1125,6 +1615,122 @@ namespace DrawClient.Views.UserControls
 
                 e.Handled = true;
             }
+        }
+        private void SendLaserPoint(Point p)
+        {
+            if (_viewModel == null || _viewModel.Toolbar == null) return;
+
+            ClientSocket.Instance.Send(new DrawMessage
+            {
+                type = "LASER",
+                roomId = _viewModel.RoomId,
+                userId = ClientSocket.Instance.CurrentUserId,
+                username = ClientSocket.Instance.CurrentUsername,
+                x1 = p.X,
+                y1 = p.Y,
+                color = "#FFB300", // màu cam vàng laser chuẩn
+                thickness = 8.0 // thickness cố định cho laser
+            });
+        }
+        private void EraseNetworkStroke(Point p1, Point p2, double thickness)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    double safeThickness = Math.Max(2.0, thickness);
+
+                    // Fix click at a single point
+                    if (p1.X == p2.X && p1.Y == p2.Y)
+                    {
+                        p2 = new Point(p1.X + 0.1, p1.Y + 0.1);
+                    }
+
+                    MyCanvas.Strokes.Erase(
+                        new Point[] { p1, p2 },
+                        new EllipseStylusShape(safeThickness, safeThickness));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error in EraseNetworkStroke: " + ex.Message);
+                }
+            });
+        }
+
+
+        private void HandleRemoteSelectionTransform(string json)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    using (var doc = System.Text.Json.JsonDocument.Parse(json))
+                    {
+                        var root = doc.RootElement;
+
+                        // Xử lý chuẩn mới: "text" chứa chuỗi "indices|oldBounds|newBounds"
+                        if (root.TryGetProperty("text", out var textEl) && !string.IsNullOrEmpty(textEl.GetString()))
+                        {
+                            string transformData = textEl.GetString();
+                            var parts = transformData.Split('|');
+
+                            if (parts.Length == 3)
+                            {
+                                // Lấy mảng index các nét vẽ bị thay đổi
+                                var indices = parts[0].Split(',').Select(int.Parse).ToList();
+
+                                // Lấy tọa độ hộp cũ và hộp mới (Ép kiểu InvariantCulture để tránh lỗi dấu chấm/phẩy)
+                                var oldB = parts[1].Split(',').Select(s => double.Parse(s, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                                var newB = parts[2].Split(',').Select(s => double.Parse(s, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+
+                                Rect oldBounds = new Rect(oldB[0], oldB[1], oldB[2], oldB[3]);
+                                Rect newBounds = new Rect(newB[0], newB[1], newB[2], newB[3]);
+
+                                // Tính toán tỉ lệ Scale và khoảng dịch chuyển Translate
+                                double scaleX = oldBounds.Width > 0 ? newBounds.Width / oldBounds.Width : 1;
+                                double scaleY = oldBounds.Height > 0 ? newBounds.Height / oldBounds.Height : 1;
+
+                                double offsetX = newBounds.X - (oldBounds.X * scaleX);
+                                double offsetY = newBounds.Y - (oldBounds.Y * scaleY);
+
+                                // Thiết lập ma trận biến đổi
+                                var matrix = new Matrix();
+                                matrix.Scale(scaleX, scaleY);
+                                matrix.Translate(offsetX, offsetY);
+
+                                // Tìm chính xác các nét vẽ theo Index để áp dụng thay đổi
+                                StrokeCollection strokesToTransform = new StrokeCollection();
+                                foreach (int idx in indices)
+                                {
+                                    if (idx >= 0 && idx < MyCanvas.Strokes.Count)
+                                    {
+                                        strokesToTransform.Add(MyCanvas.Strokes[idx]);
+                                    }
+                                }
+
+                                if (strokesToTransform.Count > 0)
+                                {
+                                    // TẠM THỜI TẮT EVENT để canvas không hiểu nhầm máy nhận đang tự kéo chuột
+                                    // và gửi ngược lại dữ liệu lên server gây vòng lặp vô hạn (Infinite Loop)
+                                    MyCanvas.SelectionMoved -= MyCanvas_SelectionMoved;
+                                    MyCanvas.SelectionResized -= MyCanvas_SelectionResized;
+
+                                    // Áp dụng ma trận biến đổi
+                                    strokesToTransform.Transform(matrix, false);
+
+                                    // Bật lại event
+                                    MyCanvas.SelectionMoved += MyCanvas_SelectionMoved;
+                                    MyCanvas.SelectionResized += MyCanvas_SelectionResized;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Lỗi đồng bộ dịch chuyển vùng chọn: " + ex.Message);
+                }
+            });
         }
     }
 

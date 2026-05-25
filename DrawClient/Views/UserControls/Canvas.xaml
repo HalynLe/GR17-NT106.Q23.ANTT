@@ -622,18 +622,30 @@
                 <Grid>
 
                     <!-- Canvas vẽ -->
-                    <InkCanvas x:Name="inkCanvas"/>
+                    <InkCanvas x:Name="inkCanvas" IsHitTestVisible="False" EditingMode="None"/>
 
                     <!-- Laser pointer -->
                     <Canvas x:Name="laserCanvas"
-            IsHitTestVisible="False">
+                            IsHitTestVisible="False"
+                            Panel.ZIndex="50">
 
                         <Ellipse x:Name="laserDot"
-                 Width="24"
-                 Height="24"
-                 Fill="Red"
-                 Opacity="0"
-                 Visibility="Collapsed"/>
+                                 Width="24"
+                                 Height="24"
+                                 Opacity="0"
+                                 Visibility="Collapsed"
+                                 IsHitTestVisible="False">
+                            <Ellipse.Fill>
+                                <RadialGradientBrush GradientOrigin="0.5,0.5" Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+                                    <GradientStop Color="#FFFFE066" Offset="0"/>
+                                    <GradientStop Color="#80FF6A00" Offset="0.5"/>
+                                    <GradientStop Color="#00FF6A00" Offset="1"/>
+                                </RadialGradientBrush>
+                            </Ellipse.Fill>
+                            <Ellipse.Effect>
+                                <DropShadowEffect Color="#FFFFA000" BlurRadius="18" ShadowDepth="0" Opacity="0.9"/>
+                            </Ellipse.Effect>
+                        </Ellipse>
                     </Canvas>
 
                 </Grid>

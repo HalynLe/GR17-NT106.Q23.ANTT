@@ -1,13 +1,14 @@
-﻿using System;
+﻿using MySql.Data.MySqlClient;
+using Org.BouncyCastle.Bcpg;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using MySql.Data.MySqlClient;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace DrawServer
@@ -80,7 +81,7 @@ namespace DrawServer
                     var pingMsg = new DrawMessage { type = "PING" };
                     string json = JsonSerializer.Serialize(pingMsg) + "\n";
                     byte[] data = Encoding.UTF8.GetBytes(json);
-                    await client.GetStream().WriteAsync(data, 0, data.Length);
+                    SendPacketToClient(client, JsonSerializer.Serialize(pingMsg));
                 }
                 catch { break; }
             }
@@ -214,54 +215,60 @@ namespace DrawServer
                     // Phân loại phòng: Lấy danh sách client của phòng này, hoặc tạo mới nếu phòng chưa tồn tại
                     var room = rooms.GetOrAdd(msg.roomId, _ => new ConcurrentDictionary<TcpClient, byte>());
                     // Gửi thông tin của những người ĐANG Ở SẴN trong phòng cho thành viên MỚI VÀO
-                    foreach (var existingClient in room.Keys)
+                    // DÙNG TASK CHỜ 500MS ĐỂ GIAO DIỆN CLIENT KỊP LOAD XONG
+                    Task.Run(async () =>
                     {
-                        if (clientMetadata.TryGetValue(existingClient, out var meta))
-                        {
-                            var existingUserMsg = new DrawMessage
-                            {
-                                type = "JOIN",
-                                roomId = msg.roomId,
-                                userId = meta.UserId,
-                                username = meta.Username
-                            };
-                            string existingJson = JsonSerializer.Serialize(existingUserMsg) + "\n";
-                            byte[] existingData = Encoding.UTF8.GetBytes(existingJson);
-                            try { client.GetStream().Write(existingData, 0, existingData.Length); } catch { }
-                        }
-                    }
+                        await Task.Delay(500); // Trì hoãn nửa giây
 
-                    room[client] = 0; // Thêm client vào phòng
-                    // Lưu lại Metadata để xử lý khi thoát
-                    // Lưu ý: Client cần gửi kèm userId trong gói tin JOIN
-                    clientMetadata[client] = (msg.userId, msg.roomId, msg.username);
-                   using (var conn = new MySqlConnection(connectionString))
-                    {
-                        conn.Open();
-                        string updateSql = @"
+                        // 1. Gửi thông tin của những người ĐANG Ở SẴN cho thành viên MỚI VÀO
+                        foreach (var existingClient in room.Keys)
+                        {
+                            if (existingClient != client && clientMetadata.TryGetValue(existingClient, out var meta))
+                            {
+                                var existingUserMsg = new DrawMessage
+                                {
+                                    type = "JOIN",
+                                    roomId = msg.roomId,
+                                    userId = meta.UserId,
+                                    username = meta.Username
+                                };
+                                SendPacketToClient(client, JsonSerializer.Serialize(existingUserMsg));
+                            }
+                        }
+
+                        room[client] = 0; // Thêm client vào phòng
+                                          // Lưu lại Metadata để xử lý khi thoát
+                                          // Lưu ý: Client cần gửi kèm userId trong gói tin JOIN
+                        clientMetadata[client] = (msg.userId, msg.roomId, msg.username);
+                        using (var conn = new MySqlConnection(connectionString))
+                        {
+                            conn.Open();
+                            string updateSql = @"
                             INSERT INTO RoomMembers (user_id, room_id, is_online, role) 
                             VALUES (@uid, @rid, 1, 'MEMBER')
                             ON DUPLICATE KEY UPDATE is_online = 1";
-                        using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
-                        {
-                            cmd.Parameters.AddWithValue("@uid", msg.userId);
-                            cmd.Parameters.AddWithValue("@rid", int.Parse(msg.roomId));
-                            cmd.ExecuteNonQuery();
+                            using (var cmd = new MySqlCommand(updateSql, conn))   // <--- ĐÃ SỬA
+                            {
+                                cmd.Parameters.AddWithValue("@uid", msg.userId);
+                                cmd.Parameters.AddWithValue("@rid", int.Parse(msg.roomId));
+                                cmd.ExecuteNonQuery();
+                            }
                         }
-                    }
-                    // Cập nhật Online trong DB
-                    _ = NotifyMasterStatusChanged(msg.userId, int.Parse(msg.roomId), true);
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"[NODE - USER] Client ID {msg.userId} ({msg.username}) đã kết nối vào phòng vẽ: {msg.roomId}");
-                    Console.ResetColor();
+                        // Cập nhật Online trong DB
+                        _ = NotifyMasterStatusChanged(msg.userId, int.Parse(msg.roomId), true);
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"[NODE - USER] Client ID {msg.userId} ({msg.username}) đã kết nối vào phòng vẽ: {msg.roomId}");
+                        Console.ResetColor();
 
-                    // Phát lệnh JOIN của thành viên mới này cho TẤT CẢ mọi người trong phòng biết để cập nhật UI
-                    string joinJson = JsonSerializer.Serialize(msg);
-                    BroadcastToRoom(msg.roomId, joinJson, client);
-                    // Gửi lịch sử dữ liệu
-                    SendHistoryToClient(client, msg.roomId);
-                    SendChatHistoryToClient(client, msg.roomId);
+                        // Phát lệnh JOIN của thành viên mới này cho TẤT CẢ mọi người trong phòng biết để cập nhật UI
+                        string joinJson = JsonSerializer.Serialize(msg);
+                        BroadcastToRoom(msg.roomId, joinJson, client);
+                        // Gửi lịch sử dữ liệu
+                        SendHistoryToClient(client, msg.roomId);
+                        SendChatHistoryToClient(client, msg.roomId);
+                    });
                 }
+
                 else if (
                      msg.type == "DRAW" ||
                      msg.type == "ERASE" ||
@@ -269,7 +276,9 @@ namespace DrawServer
                      msg.type == "TEXT" ||
                      msg.type == "CLEAR" ||
                      msg.type == "DELETE_TEXT" ||
-                     msg.type == "CHAT"
+                     msg.type == "CHAT" ||
+                     msg.type == "LASER" ||
+                     msg.type == "TRANSFORM_SELECTION"
                 )
                 {
                     if (clientMetadata.TryGetValue(client, out var metadata))
@@ -292,6 +301,10 @@ namespace DrawServer
                         Console.ResetColor();
                         SaveDrawAction(msg);
                     }
+                    else if (msg.type == "LASER")
+                    {
+                        // Laser đồng bộ tạm thời, không lưu vào lịch sử
+                    }
                     else
                     {
                         SaveDrawAction(msg);
@@ -310,7 +323,7 @@ namespace DrawServer
                         action.roomId = msg.roomId;
                         if (clientMetadata.TryGetValue(client, out var meta))
                             action.userId = meta.UserId;
-                        
+
                         string actionJson = JsonSerializer.Serialize(action);
                         BroadcastToRoom(msg.roomId, actionJson, client);
                         SaveDrawAction(action);
@@ -416,7 +429,7 @@ namespace DrawServer
 
             // Gửi parallel để không block thread
             var tasks = new List<Task>();
-            
+
             foreach (var client in clients.Keys)
             {
                 if (!client.Connected)
@@ -425,24 +438,39 @@ namespace DrawServer
                     continue;
                 }
 
+                if (sender != null && client == sender)
+                    continue;
+
                 // Gửi không chờ (fire and forget)
                 tasks.Add(Task.Run(() =>
                 {
-                    try
-                    {
-                        var stream = client.GetStream();
-                        stream.Write(data, 0, data.Length);
-                        stream.Flush();
-                    }
-                    catch
-                    {
-                        clients.TryRemove(client, out _);
-                    }
+                    SendPacketToClient(client, rawJson);
                 }));
             }
-            
-            // Không chờ tất cả xong, tiếp tục xử lý client khác
-            Task.WaitAll(tasks.ToArray(), TimeSpan.FromMilliseconds(100));
+
+                // Không chờ tất cả xong, tiếp tục xử lý client khác
+                Task.WaitAll(tasks.ToArray(), TimeSpan.FromMilliseconds(100));
+        }
+        // Thêm hàm này vào trong ServerSocket.cs
+        private void SendPacketToClient(TcpClient client, string rawJson)
+        {
+            if (client == null || !client.Connected) return;
+            try
+            {
+                if (!rawJson.EndsWith("\n")) rawJson += "\n";
+                byte[] data = Encoding.UTF8.GetBytes(rawJson);
+
+                // KHÓA luồng stream: Chỉ 1 tác vụ được ghi dữ liệu tại 1 thời điểm
+                lock (client)
+                {
+                    client.GetStream().Write(data, 0, data.Length);
+                    client.GetStream().Flush();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[NODE SERVER] Lỗi gửi tin: " + ex.Message);
+            }
         }
         private void RemoveClientFromRoom(string roomId, TcpClient client)
         {
@@ -604,8 +632,7 @@ namespace DrawServer
                 byte[] data =
                     Encoding.UTF8.GetBytes(json);
 
-                client.GetStream()
-                    .Write(data, 0, data.Length);
+                SendPacketToClient(client, JsonSerializer.Serialize(packet));
 
                 Console.WriteLine(
                     $"Đã gửi {history.Count} history actions");
@@ -686,7 +713,7 @@ namespace DrawServer
                 byte[] data =
                     Encoding.UTF8.GetBytes(json);
 
-                client.GetStream().Write(data, 0, data.Length);
+                SendPacketToClient(client, JsonSerializer.Serialize(packet));
 
                 Console.WriteLine(
                     $"Đã gửi {history.Count} chat messages");

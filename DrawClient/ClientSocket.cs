@@ -298,7 +298,9 @@ namespace DrawClient
                         type == "CLEAR" ||
                         type == "CHAT" ||
                         type == "DELETE_TEXT" ||
-                        type == "LEAVE"
+                        type == "LEAVE" ||
+                        type == "LASER"||
+                        type == "TRANSFORM_SELECTION"
                     )
                     {
                         OnMessageReceived?.Invoke(msg);
@@ -311,6 +313,7 @@ namespace DrawClient
             }
         }
         #endregion
+
 
         public void Disconnect()
         {
